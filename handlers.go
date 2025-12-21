@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"path"
 	"strings"
 	"unicode"
@@ -102,21 +103,30 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDownloadSingle(w http.ResponseWriter, r *http.Request) {
-	url := r.URL.Query().Get("url")
-	if url == "" {
-		http.Error(w, "Missing URL", 400)
+	rawURL := r.URL.Query().Get("url")
+	if rawURL == "" {
+		http.Error(w, "Missing URL", http.StatusBadRequest)
 		return
 	}
 
-	body, _, err := s.reddit.StreamImage(url)
+	body, _, err := s.reddit.StreamImage(rawURL)
 	if err != nil {
-		// If we can't stream, we return a 502 Bad Gateway
-		http.Error(w, fmt.Sprintf("Failed to retrieve image from Reddit: %v", err), 502)
+		http.Error(w, fmt.Sprintf("Download failed: %v", err), http.StatusBadGateway)
 		return
 	}
 	defer body.Close()
 
-	w.Header().Set("Content-Disposition", "attachment; filename="+path.Base(url))
+	// Parse URL to get a clean filename
+	u, err := url.Parse(rawURL)
+	filename := "image.jpg"
+	if err == nil {
+		filename = path.Base(u.Path)
+	}
+	if filename == "" || filename == "." || filename == "/" {
+		filename = "image.jpg"
+	}
+
+	w.Header().Set("Content-Disposition", "attachment; filename="+filename)
 	io.Copy(w, body)
 }
 

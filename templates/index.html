@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-bs-theme="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -8,79 +8,186 @@
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
     <style>
+        :root {
+            --card-height: 280px;
+        }
+        body {
+            transition: background-color 0.3s, color 0.3s;
+        }
         .gallery-img {
             width: 100%;
-            height: 250px;
+            height: var(--card-height);
             object-fit: cover;
             border-radius: 8px 8px 0 0;
             cursor: pointer;
+            transition: opacity 0.2s;
+        }
+        .gallery-img:hover {
+            opacity: 0.9;
         }
         .img-card {
-            transition: transform 0.2s;
-            position: relative;
+            transition: transform 0.2s, box-shadow 0.2s;
+            border: none;
+            overflow: hidden;
         }
         .img-card:hover {
-            transform: translateY(-5px);
-            box-shadow: 0 .5rem 1rem rgba(0,0,0,.15)!important;
+            transform: translateY(-4px);
+            box-shadow: 0 8px 20px rgba(0,0,0,0.2);
         }
-        .checkbox-overlay {
+        .checkbox-wrapper {
             position: absolute;
             top: 10px;
             left: 10px;
             z-index: 10;
-            transform: scale(1.5);
+            background: rgba(0, 0, 0, 0.6);
+            border-radius: 50%;
+            width: 32px;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            backdrop-filter: blur(2px);
+        }
+        .form-check-input {
+            width: 1.2em;
+            height: 1.2em;
+            margin: 0;
             cursor: pointer;
+        }
+        .sticky-toolbar {
+            background: rgba(var(--bs-body-bg-rgb), 0.95);
+            backdrop-filter: blur(10px);
+            border-bottom: 1px solid var(--bs-border-color);
+            transition: background-color 0.3s;
+        }
+        .btn-floating {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+        }
+        /* Mobile Tweaks */
+        @media (max-width: 576px) {
+            :root { --card-height: 200px; }
+            .btn-group-responsive {
+                flex-direction: column;
+                width: 100%;
+                gap: 5px;
+            }
+            .btn-group-responsive .btn {
+                width: 100%;
+                border-radius: 6px !important;
+            }
+        }
+        #loadingOverlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.7);
+            z-index: 2000;
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: white;
         }
     </style>
 </head>
-<body class="bg-light">
+<body>
 
-<div class="container py-5">
-    <div class="row justify-content-center">
-        <div class="col-md-8 text-center">
-            <h1 class="mb-4">Reddit Gallery Downloader</h1>
+<!-- Theme Toggle & Loading -->
+<div id="loadingOverlay">
+    <div class="spinner-border text-primary mb-3" role="status" style="width: 3rem; height: 3rem;"></div>
+    <h4 class="fw-light">Processing...</h4>
+</div>
+
+<nav class="navbar navbar-expand-lg border-bottom mb-4">
+    <div class="container">
+        <a class="navbar-brand fw-bold d-flex align-items-center gap-2" href="/">
+            <img src="/static/favicon.svg" width="32" height="32" alt="Logo">
+            Reddit Gallery DL
+        </a>
+        <button class="btn btn-outline-secondary btn-sm ms-auto" onclick="toggleTheme()" id="themeBtn">
+            <i class="bi bi-sun-fill"></i>
+        </button>
+    </div>
+</nav>
+
+<div class="container pb-5">
+    <!-- Search Section -->
+    <div class="row justify-content-center mb-5">
+        <div class="col-lg-8 text-center">
+            <h1 class="display-6 fw-bold mb-3">Download Reddit Galleries</h1>
+            <p class="text-secondary mb-4">Paste a link to view and download high-quality images.</p>
             
-            <form action="/" method="POST" class="d-flex gap-2 mb-5">
-                <input type="text" name="url" class="form-control form-control-lg" placeholder="https://www.reddit.com/r/..." value="{{ .URL }}" required>
-                <button type="submit" class="btn btn-primary btn-lg">Fetch</button>
+            <form action="/" method="POST" class="d-flex gap-2 shadow-sm p-1 rounded-pill bg-body-tertiary border" onsubmit="showLoading()">
+                <input type="text" name="url" class="form-control form-control-lg border-0 rounded-pill bg-transparent ps-4" 
+                       placeholder="https://www.reddit.com/r/..." value="{{ .URL }}" required autocomplete="off">
+                <button type="submit" class="btn btn-primary rounded-pill px-4 fw-bold">Fetch</button>
             </form>
         </div>
     </div>
 
+    <!-- Alerts -->
     {{ if .Alert }}
-    <div class="alert alert-{{ .Alert.Type }} text-center" role="alert">
+    <div class="alert alert-{{ .Alert.Type }} d-flex align-items-center justify-content-center gap-2 shadow-sm" role="alert">
+        {{ if eq .Alert.Type "success" }}<i class="bi bi-check-circle-fill"></i>{{ end }}
+        {{ if eq .Alert.Type "warning" }}<i class="bi bi-exclamation-triangle-fill"></i>{{ end }}
+        {{ if eq .Alert.Type "danger" }}<i class="bi bi-x-circle-fill"></i>{{ end }}
         {{ .Alert.Message }}
     </div>
     {{ end }}
 
+    <!-- Gallery Section -->
     {{ if .Images }}
-    <form action="/download-zip" method="POST" id="galleryForm">
+    <form action="/download-zip" method="POST" id="galleryForm" onsubmit="showLoading()">
         <input type="hidden" name="page_title" value="{{ .Title }}">
-        <!-- Helper for all images if needed, though checkboxes cover it -->
         
-        <div class="d-flex justify-content-between align-items-center mb-3 sticky-top bg-light py-3 border-bottom" style="z-index: 100;">
-            <h3 class="h5 m-0 text-truncate" style="max-width: 40%;">{{ .Title }}</h3>
-            <div class="btn-group">
+        <!-- Sticky Toolbar -->
+        <div class="sticky-toolbar sticky-top py-3 mb-4 rounded-3 px-3 shadow-sm d-flex flex-wrap align-items-center justify-content-between gap-3">
+            <div class="d-flex align-items-center gap-2 overflow-hidden">
+                <span class="badge bg-primary rounded-pill">{{ len .Images }}</span>
+                <h5 class="m-0 text-truncate">{{ .Title }}</h5>
+            </div>
+            
+            <div class="btn-group btn-group-responsive">
                 <button type="button" class="btn btn-outline-secondary" onclick="toggleAll(true)">Select All</button>
-                <button type="button" class="btn btn-outline-secondary" onclick="toggleAll(false)">Deselect All</button>
-                <button type="button" class="btn btn-info text-white" onclick="downloadSelectedSeparate()"><i class="bi bi-files"></i> Download Selected (Separate)</button>
-                <button type="submit" class="btn btn-success"><i class="bi bi-file-zip"></i> Download Selected (ZIP)</button>
+                <button type="button" class="btn btn-outline-secondary" onclick="toggleAll(false)">None</button>
+                <button type="button" class="btn btn-info text-white" onclick="downloadSelectedSeparate()">
+                    <i class="bi bi-files"></i> Separate
+                </button>
+                <button type="submit" class="btn btn-success fw-bold">
+                    <i class="bi bi-file-zip"></i> Download ZIP
+                </button>
             </div>
         </div>
 
-        <div class="row g-4">
+        <!-- Image Grid -->
+        <div class="row g-3">
             {{ range .Images }}
-            <div class="col-md-4 col-sm-6">
-                <div class="card img-card shadow-sm h-100 border-0">
-                    <input type="checkbox" name="image_urls" value="{{ . }}" class="checkbox-overlay form-check-input" checked>
+            <div class="col-6 col-md-4 col-lg-3">
+                <div class="card img-card h-100">
+                    <div class="checkbox-wrapper">
+                        <input type="checkbox" name="image_urls" value="{{ . }}" class="form-check-input" checked>
+                    </div>
                     
                     <a href="{{ . }}" target="_blank">
-                        <img src="{{ . }}" class="gallery-img card-img-top" alt="Gallery Image">
+                        <img src="{{ . }}" class="gallery-img card-img-top" alt="Reddit Image" loading="lazy">
                     </a>
                     
-                    <div class="card-body p-2 d-flex gap-2">
-                        <a href="{{ . }}" target="_blank" class="btn btn-sm btn-outline-secondary w-50">View Full</a>
-                        <a href="/download-single?url={{ . }}" class="btn btn-sm btn-primary w-50"><i class="bi bi-download"></i> Download</a>
+                    <div class="card-body p-2 d-flex gap-2 align-items-center justify-content-center bg-body-tertiary">
+                        <a href="{{ . }}" target="_blank" class="btn btn-sm btn-outline-secondary w-50" title="View Original">
+                            <i class="bi bi-eye"></i> View
+                        </a>
+                        <a href="/download-single?url={{ . }}" class="btn btn-sm btn-primary w-50" title="Download File">
+                            <i class="bi bi-download"></i> Save
+                        </a>
                     </div>
                 </div>
             </div>
@@ -92,8 +199,37 @@
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 <script>
+    // Theme Logic
+    function toggleTheme() {
+        const html = document.documentElement;
+        const current = html.getAttribute('data-bs-theme');
+        const next = current === 'dark' ? 'light' : 'dark';
+        html.setAttribute('data-bs-theme', next);
+        localStorage.setItem('theme', next);
+        updateThemeIcon(next);
+    }
+
+    function updateThemeIcon(theme) {
+        const btn = document.getElementById('themeBtn');
+        btn.innerHTML = theme === 'dark' ? '<i class="bi bi-moon-fill"></i>' : '<i class="bi bi-sun-fill"></i>';
+    }
+
+    // Load saved theme
+    const savedTheme = localStorage.getItem('theme') || 'dark';
+    document.documentElement.setAttribute('data-bs-theme', savedTheme);
+    updateThemeIcon(savedTheme);
+
+    // Selection Logic
     function toggleAll(checked) {
         document.querySelectorAll('input[name="image_urls"]').forEach(cb => cb.checked = checked);
+    }
+
+    function showLoading() {
+        document.getElementById('loadingOverlay').style.display = 'flex';
+        // Hide after 5 seconds just in case (e.g. browser blocks download)
+        setTimeout(() => {
+            document.getElementById('loadingOverlay').style.display = 'none';
+        }, 5000);
     }
 
     async function downloadSelectedSeparate() {
@@ -103,26 +239,31 @@
             return;
         }
 
-        if (!confirm(`You are about to download ${selected.length} files separately. Your browser may ask for permission to allow multiple downloads. Continue?`)) {
+        if (!confirm(`Download ${selected.length} files separately? Please allow 'Multiple Downloads' if prompted.`)) {
             return;
         }
 
+        // Show loading briefly
+        document.getElementById('loadingOverlay').style.display = 'flex';
+        
         for (const [index, checkbox] of Array.from(selected).entries()) {
             const imgUrl = checkbox.value;
-            // Use the existing download-single route
+            // Use encodeURIComponent to ensure special chars in URL don't break the query param
             const downloadLink = `/download-single?url=${encodeURIComponent(imgUrl)}`;
             
-            // Create a temporary link to trigger download
-            const a = document.createElement('a');
-            a.href = downloadLink;
-            a.style.display = 'none';
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
+            const iframe = document.createElement('iframe');
+            iframe.style.display = 'none';
+            iframe.src = downloadLink;
+            document.body.appendChild(iframe);
+            
+            // Cleanup iframe after a delay
+            setTimeout(() => document.body.removeChild(iframe), 60000);
 
-            // Small delay to prevent browser choking
+            // 500ms delay between downloads to prevent browser throttling
             await new Promise(r => setTimeout(r, 500));
         }
+        
+        document.getElementById('loadingOverlay').style.display = 'none';
     }
 </script>
 </body>
