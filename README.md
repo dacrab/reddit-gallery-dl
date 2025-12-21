@@ -15,8 +15,8 @@ A fast, memory-efficient web tool to download high-resolution Reddit galleries. 
 ### Using Docker (Recommended)
 
 ```bash
-docker build -t rdownloader .
-docker run -p 5000:5000 rdownloader
+docker build -t reddit-gallery-dl .
+docker run -p 5000:5000 reddit-gallery-dl
 ```
 
 Open [http://localhost:5000](http://localhost:5000) in your browser.
@@ -27,8 +27,8 @@ Requires [Go 1.22+](https://go.dev/dl/).
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/rdownloader.git
-cd rdownloader
+git clone https://github.com/dacrab/reddit-gallery-dl.git
+cd reddit-gallery-dl
 
 # Run directly
 go run .

@@ -1,3 +1,3 @@
-module rdownloader
+module github.com/dacrab/reddit-gallery-dl
 
-go 1.25.5
+go 1.22
