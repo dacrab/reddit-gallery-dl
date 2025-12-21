@@ -1,13 +1,27 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"path"
 	"strings"
 	"time"
+)
+
+const (
+	userAgent      = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+	defaultTimeout = 120 * time.Second
+)
+
+var (
+	ErrInvalidURL   = errors.New("invalid reddit url")
+	ErrPostNotFound = errors.New("post not found or deleted")
+	ErrNoImages     = errors.New("no images found in post")
 )
 
 type RedditClient struct {
@@ -16,80 +30,128 @@ type RedditClient struct {
 
 func NewRedditClient() *RedditClient {
 	return &RedditClient{
-		client: &http.Client{Timeout: 120 * time.Second},
+		client: &http.Client{Timeout: defaultTimeout},
 	}
 }
 
-// Gallery is the Clean Domain Object
 type Gallery struct {
 	Title  string
 	Images []string
-	URL    string // Original Input URL
+	URL    string
 }
 
-// Centralized Request Handler (The Fix for Duplication)
-func (r *RedditClient) makeRequest(method, url string) (*http.Response, error) {
-	req, err := http.NewRequest(method, url, nil)
+// JSON Structs
+type redditResponse []struct {
+	Data struct {
+		Children []struct {
+			Data redditPost `json:"data"`
+		} `json:"children"`
+	} `json:"data"`
+}
+
+type redditPost struct {
+	Title         string `json:"title"`
+	IsGallery     bool   `json:"is_gallery"`
+	URL           string `json:"url_overridden_by_dest"`
+	GalleryData   *struct {
+		Items []struct{ MediaID string `json:"media_id"` } `json:"items"`
+	} `json:"gallery_data"`
+	MediaMetadata map[string]struct {
+		S struct{ U, Gif string } `json:"s"`
+	} `json:"media_metadata"`
+}
+
+func (r *RedditClient) makeRequest(ctx context.Context, method, targetURL string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, method, targetURL, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("request creation failed: %w", err)
 	}
-
-	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-	// Always send the cookie, it doesn't hurt non-NSFW requests
+	req.Header.Set("User-Agent", userAgent)
 	req.AddCookie(&http.Cookie{Name: "over18", Value: "1"})
-
 	return r.client.Do(req)
 }
 
-func (r *RedditClient) FetchGallery(postURL string) (*Gallery, error) {
-	// 1. Resolve shortened URLs
-	resolvedURL, err := r.resolveURL(postURL)
+func (r *RedditClient) FetchGallery(ctx context.Context, postURL string) (*Gallery, error) {
+	resolvedURL, err := r.resolveURL(ctx, postURL)
 	if err != nil {
 		return nil, err
 	}
 
-	// 2. Fetch JSON
 	apiURL := fmt.Sprintf("%s.json", strings.TrimRight(resolvedURL, "/"))
-	resp, err := r.makeRequest("GET", apiURL)
+	resp, err := r.makeRequest(ctx, "GET", apiURL)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("reddit API status: %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("reddit api status: %d", resp.StatusCode)
 	}
 
-	// 3. Parse (Using anonymous structs to avoid global clutter)
-	var data []struct {
-		Data struct {
-			Children []struct {
-				Data struct {
-					Title         string `json:"title"`
-					IsGallery     bool   `json:"is_gallery"`
-					URL           string `json:"url_overridden_by_dest"`
-					GalleryData   *struct {
-						Items []struct{ MediaID string `json:"media_id"` } `json:"items"`
-					} `json:"gallery_data"`
-					MediaMetadata map[string]struct {
-						S struct{ U, Gif string } `json:"s"`
-					} `json:"media_metadata"`
-				} `json:"data"`
-			} `json:"children"`
-		} `json:"data"`
-	}
-
+	var data redditResponse
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-		return nil, fmt.Errorf("failed to decode JSON")
+		return nil, fmt.Errorf("json decode error: %w", err)
 	}
 
 	if len(data) == 0 || len(data[0].Data.Children) == 0 {
-		return nil, fmt.Errorf("no post data found")
+		return nil, ErrPostNotFound
 	}
 
 	post := data[0].Data.Children[0].Data
+	images := extractImages(post)
 
-	// Extract Images
+	if len(images) == 0 {
+		return nil, ErrNoImages
+	}
+
+	return &Gallery{
+		Title:  post.Title,
+		Images: images,
+		URL:    postURL,
+	}, nil
+}
+
+func (r *RedditClient) resolveURL(ctx context.Context, inputURL string) (string, error) {
+	inputURL = strings.TrimSpace(inputURL)
+	if !strings.HasPrefix(inputURL, "http") {
+		inputURL = "https://" + inputURL
+	}
+
+	u, err := url.Parse(inputURL)
+	if err != nil || u.Host == "" || !strings.Contains(u.Host, ".") {
+		return "", ErrInvalidURL
+	}
+
+	resp, err := r.makeRequest(ctx, "HEAD", inputURL)
+	if err != nil {
+		resp, err = r.makeRequest(ctx, "GET", inputURL)
+		if err != nil {
+			return "", err
+		}
+	}
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+
+	final := resp.Request.URL
+	if !strings.Contains(final.Host, "reddit.com") {
+		return "", ErrInvalidURL
+	}
+	return fmt.Sprintf("%s://%s%s", final.Scheme, final.Host, final.Path), nil
+}
+
+func (r *RedditClient) StreamImage(ctx context.Context, urlStr string) (io.ReadCloser, string, error) {
+	resp, err := r.makeRequest(ctx, "GET", urlStr)
+	if err != nil {
+		return nil, "", err
+	}
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		return nil, "", fmt.Errorf("status %d", resp.StatusCode)
+	}
+	return resp.Body, detectExtension(urlStr, resp.Header.Get("Content-Type")), nil
+}
+
+func extractImages(post redditPost) []string {
 	var images []string
 	if post.IsGallery && post.GalleryData != nil {
 		for _, item := range post.GalleryData.Items {
@@ -104,54 +166,18 @@ func (r *RedditClient) FetchGallery(postURL string) (*Gallery, error) {
 	} else if post.URL != "" {
 		images = append(images, post.URL)
 	}
-
-	return &Gallery{
-		Title:  post.Title,
-		Images: images,
-		URL:    postURL,
-	}, nil
+	return images
 }
 
-func (r *RedditClient) resolveURL(inputURL string) (string, error) {
-	// 1. Sanitize Input: Ensure scheme exists
-	inputURL = strings.TrimSpace(inputURL)
-	if !strings.HasPrefix(inputURL, "http://") && !strings.HasPrefix(inputURL, "https://") {
-		inputURL = "https://" + inputURL
-	}
-
-	// 2. Basic Validation
-	u, err := url.Parse(inputURL)
-	if err != nil || u.Host == "" || !strings.Contains(u.Host, ".") {
-		return "", fmt.Errorf("invalid URL format")
-	}
-
-	resp, err := r.makeRequest("HEAD", inputURL) // Use HEAD to just check headers/redirects
-	if err != nil {
-		// Fallback to GET if HEAD fails (some servers block HEAD)
-		resp, err = r.makeRequest("GET", inputURL)
-		if err != nil {
-			return "", err
+func detectExtension(urlStr, contentType string) string {
+	if strings.Contains(contentType, "png") { return ".png" }
+	if strings.Contains(contentType, "gif") { return ".gif" }
+	u, err := url.Parse(urlStr)
+	if err == nil {
+		ext := strings.ToLower(path.Ext(u.Path))
+		if ext == ".png" || ext == ".gif" || ext == ".jpg" || ext == ".jpeg" {
+			return ext
 		}
 	}
-	io.Copy(io.Discard, resp.Body)
-	resp.Body.Close()
-
-	final := resp.Request.URL
-	if !strings.Contains(final.Host, "reddit.com") {
-		return "", fmt.Errorf("invalid reddit url")
-	}
-	return fmt.Sprintf("%s://%s%s", final.Scheme, final.Host, final.Path), nil
-}
-
-func (r *RedditClient) StreamImage(url string) (io.ReadCloser, string, error) {
-	resp, err := r.makeRequest("GET", url)
-	if err != nil {
-		return nil, "", err
-	}
-
-	ext := ".jpg"
-	if strings.Contains(url, ".png") { ext = ".png" }
-	if strings.Contains(url, ".gif") { ext = ".gif" }
-
-	return resp.Body, ext, nil
+	return ".jpg"
 }

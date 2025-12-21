@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/zip"
+	"errors"
 	"fmt"
 	"html/template"
 	"io"
@@ -34,10 +35,9 @@ func (s *Server) Routes() *http.ServeMux {
 	return mux
 }
 
-// Alert represents a UI notification
 type Alert struct {
 	Message string
-	Type    string // danger, warning, success, info
+	Type    string
 }
 
 type TemplateData struct {
@@ -53,50 +53,39 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	url := r.FormValue("url")
+	urlStr := r.FormValue("url")
 	
-	render := func(data TemplateData) {
-		s.tmpl.ExecuteTemplate(w, "index.html", data)
-	}
-
-	gallery, err := s.reddit.FetchGallery(url)
+	// Use Context for cancellation
+	gallery, err := s.reddit.FetchGallery(r.Context(), urlStr)
 	if err != nil {
-		// Distinguish between client errors and server errors for better UX
-		msg := err.Error()
+		alertMsg := err.Error()
 		alertType := "danger"
-		
-		if strings.Contains(msg, "invalid reddit url") {
-			msg = "The link provided does not look like a valid Reddit URL."
+
+		// Senior Error Handling: Type assertions / Sentinel checks
+		if errors.Is(err, ErrInvalidURL) {
+			alertMsg = "That doesn't look like a valid Reddit link."
 			alertType = "warning"
-		} else if strings.Contains(msg, "no post data") {
-			msg = "Could not find any content at that URL. It might be deleted or private."
+		} else if errors.Is(err, ErrPostNotFound) {
+			alertMsg = "Post not found. It might be deleted or private."
 			alertType = "warning"
+		} else if errors.Is(err, ErrNoImages) {
+			alertMsg = "This post exists but has no images."
+			alertType = "info"
 		}
 
-		render(TemplateData{
-			URL: url,
-			Alert: &Alert{Message: msg, Type: alertType},
+		s.tmpl.ExecuteTemplate(w, "index.html", TemplateData{
+			URL: urlStr,
+			Alert: &Alert{Message: alertMsg, Type: alertType},
 		})
 		return
 	}
 
-	if len(gallery.Images) == 0 {
-		render(TemplateData{
-			URL: url,
-			Alert: &Alert{
-				Message: "Found the post, but it contains no accessible images.", 
-				Type: "warning",
-			},
-		})
-		return
-	}
-
-	render(TemplateData{
+	s.tmpl.ExecuteTemplate(w, "index.html", TemplateData{
 		Title:  gallery.Title,
 		Images: gallery.Images,
-		URL:    url,
+		URL:    urlStr,
 		Alert: &Alert{
-			Message: fmt.Sprintf("Successfully loaded %d images!", len(gallery.Images)), 
+			Message: fmt.Sprintf("Loaded %d images!", len(gallery.Images)), 
 			Type: "success",
 		},
 	})
@@ -109,22 +98,19 @@ func (s *Server) handleDownloadSingle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, _, err := s.reddit.StreamImage(rawURL)
+	body, _, err := s.reddit.StreamImage(r.Context(), rawURL)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Download failed: %v", err), http.StatusBadGateway)
+		http.Error(w, "Image download failed", http.StatusBadGateway)
 		return
 	}
 	defer body.Close()
 
-	// Parse URL to get a clean filename
-	u, err := url.Parse(rawURL)
+	u, _ := url.Parse(rawURL)
 	filename := "image.jpg"
-	if err == nil {
+	if u != nil {
 		filename = path.Base(u.Path)
 	}
-	if filename == "" || filename == "." || filename == "/" {
-		filename = "image.jpg"
-	}
+	if filename == "" || filename == "/" { filename = "image.jpg" }
 
 	w.Header().Set("Content-Disposition", "attachment; filename="+filename)
 	io.Copy(w, body)
@@ -132,43 +118,49 @@ func (s *Server) handleDownloadSingle(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDownloadZip(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Redirect(w, r, "/", 303)
+		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
 
 	r.ParseForm()
 	urls := r.Form["image_urls"]
 	if len(urls) == 0 {
-		// Since this is a form post, a simple text error is fine, 
-		// but ideally we'd redirect with flash message. 
-		// For now, keeping it simple as this mostly happens if JS is disabled/bypassed.
-		http.Error(w, "No images selected for download.", 400)
+		http.Error(w, "No images selected", http.StatusBadRequest)
 		return
 	}
 
+	// Sanitize title
+	title := cleanFilename(r.FormValue("page_title"))
 	w.Header().Set("Content-Type", "application/zip")
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s.zip\"", cleanFilename(r.FormValue("page_title"))))
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s.zip\"", title))
 
 	z := zip.NewWriter(w)
 	defer z.Close()
 
+	// Process serially to minimize memory usage (Low RAM env compatible)
 	for i, u := range urls {
-		body, ext, err := s.reddit.StreamImage(u)
-		if err != nil {
-			log.Printf("Failed to stream image %s: %v", u, err)
-			// We continue to next image instead of breaking the whole zip
-			continue
+		// Context check: stop if user disconnects
+		if r.Context().Err() != nil {
+			log.Println("Client disconnected, stopping zip stream.")
+			return
 		}
-		
-		f, err := z.Create(fmt.Sprintf("image_%03d%s", i+1, ext))
+
+		body, ext, err := s.reddit.StreamImage(r.Context(), u)
 		if err != nil {
-			log.Printf("Failed to create zip entry: %v", err)
-			body.Close()
+			log.Printf("Skipping %s: %v", u, err)
 			continue
 		}
 
+		f, err := z.Create(fmt.Sprintf("image_%03d%s", i+1, ext))
+		if err != nil {
+			body.Close()
+			log.Printf("Zip create error: %v", err)
+			continue
+		}
+
+		// Copy buffer (32KB chunks default)
 		if _, err := io.Copy(f, body); err != nil {
-			log.Printf("Error downloading/zipping image %s: %v", u, err)
+			log.Printf("Stream error: %v", err)
 		}
 		body.Close()
 	}
