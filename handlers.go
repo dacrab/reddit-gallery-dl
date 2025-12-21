@@ -54,7 +54,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	urlStr := r.FormValue("url")
-	
+
 	// Use Context for cancellation
 	gallery, err := s.reddit.FetchGallery(r.Context(), urlStr)
 	if err != nil {
@@ -74,7 +74,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		}
 
 		s.tmpl.ExecuteTemplate(w, "index.html", TemplateData{
-			URL: urlStr,
+			URL:   urlStr,
 			Alert: &Alert{Message: alertMsg, Type: alertType},
 		})
 		return
@@ -85,8 +85,8 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		Images: gallery.Images,
 		URL:    urlStr,
 		Alert: &Alert{
-			Message: fmt.Sprintf("Loaded %d images!", len(gallery.Images)), 
-			Type: "success",
+			Message: fmt.Sprintf("Loaded %d images!", len(gallery.Images)),
+			Type:    "success",
 		},
 	})
 }
@@ -110,7 +110,9 @@ func (s *Server) handleDownloadSingle(w http.ResponseWriter, r *http.Request) {
 	if u != nil {
 		filename = path.Base(u.Path)
 	}
-	if filename == "" || filename == "/" { filename = "image.jpg" }
+	if filename == "" || filename == "/" {
+		filename = "image.jpg"
+	}
 
 	w.Header().Set("Content-Disposition", "attachment; filename="+filename)
 	io.Copy(w, body)
@@ -167,10 +169,16 @@ func (s *Server) handleDownloadZip(w http.ResponseWriter, r *http.Request) {
 }
 
 func cleanFilename(s string) string {
-	if s == "" { return "reddit_gallery" }
+	if s == "" {
+		return "reddit_gallery"
+	}
 	return strings.Map(func(r rune) rune {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) { return r }
-		if unicode.IsSpace(r) { return '_' }
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			return r
+		}
+		if unicode.IsSpace(r) {
+			return '_'
+		}
 		return -1
 	}, s)
 }

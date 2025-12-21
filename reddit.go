@@ -50,11 +50,13 @@ type redditResponse []struct {
 }
 
 type redditPost struct {
-	Title         string `json:"title"`
-	IsGallery     bool   `json:"is_gallery"`
-	URL           string `json:"url_overridden_by_dest"`
-	GalleryData   *struct {
-		Items []struct{ MediaID string `json:"media_id"` } `json:"items"`
+	Title       string `json:"title"`
+	IsGallery   bool   `json:"is_gallery"`
+	URL         string `json:"url_overridden_by_dest"`
+	GalleryData *struct {
+		Items []struct {
+			MediaID string `json:"media_id"`
+		} `json:"items"`
 	} `json:"gallery_data"`
 	MediaMetadata map[string]struct {
 		S struct{ U, Gif string } `json:"s"`
@@ -157,7 +159,9 @@ func extractImages(post redditPost) []string {
 		for _, item := range post.GalleryData.Items {
 			if media, ok := post.MediaMetadata[item.MediaID]; ok {
 				raw := media.S.U
-				if raw == "" { raw = media.S.Gif }
+				if raw == "" {
+					raw = media.S.Gif
+				}
 				if raw != "" {
 					images = append(images, strings.ReplaceAll(raw, "&amp;", "&"))
 				}
@@ -170,8 +174,12 @@ func extractImages(post redditPost) []string {
 }
 
 func detectExtension(urlStr, contentType string) string {
-	if strings.Contains(contentType, "png") { return ".png" }
-	if strings.Contains(contentType, "gif") { return ".gif" }
+	if strings.Contains(contentType, "png") {
+		return ".png"
+	}
+	if strings.Contains(contentType, "gif") {
+		return ".gif"
+	}
 	u, err := url.Parse(urlStr)
 	if err == nil {
 		ext := strings.ToLower(path.Ext(u.Path))
