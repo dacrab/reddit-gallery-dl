@@ -24,7 +24,7 @@ func main() {
 	}
 
 	// 4. Start
-	log.Printf("Starting RDownloader on port %s...", port)
+	log.Printf("Starting Reddit Gallery DL on port %s...", port)
 	if err := http.ListenAndServe(":"+port, server.Routes()); err != nil {
 		log.Fatal(err)
 	}

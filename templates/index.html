@@ -159,9 +159,6 @@
             <div class="btn-group btn-group-responsive">
                 <button type="button" class="btn btn-outline-secondary" onclick="toggleAll(true)">Select All</button>
                 <button type="button" class="btn btn-outline-secondary" onclick="toggleAll(false)">None</button>
-                <button type="button" class="btn btn-info text-white" onclick="downloadSelectedSeparate()">
-                    <i class="bi bi-files"></i> Separate
-                </button>
                 <button type="submit" class="btn btn-success fw-bold">
                     <i class="bi bi-file-zip"></i> Download ZIP
                 </button>
@@ -185,7 +182,7 @@
                         <a href="{{ . }}" target="_blank" class="btn btn-sm btn-outline-secondary w-50" title="View Original">
                             <i class="bi bi-eye"></i> View
                         </a>
-                        <a href="/download-single?url={{ . }}" class="btn btn-sm btn-primary w-50" title="Download File">
+                        <a href="/download-single?url={{ . }}" class="btn btn-sm btn-primary w-50" title="Download File" download>
                             <i class="bi bi-download"></i> Save
                         </a>
                     </div>
@@ -230,40 +227,6 @@
         setTimeout(() => {
             document.getElementById('loadingOverlay').style.display = 'none';
         }, 5000);
-    }
-
-    async function downloadSelectedSeparate() {
-        const selected = document.querySelectorAll('input[name="image_urls"]:checked');
-        if (selected.length === 0) {
-            alert("No images selected!");
-            return;
-        }
-
-        if (!confirm(`Download ${selected.length} files separately? Please allow 'Multiple Downloads' if prompted.`)) {
-            return;
-        }
-
-        // Show loading briefly
-        document.getElementById('loadingOverlay').style.display = 'flex';
-        
-        for (const [index, checkbox] of Array.from(selected).entries()) {
-            const imgUrl = checkbox.value;
-            // Use encodeURIComponent to ensure special chars in URL don't break the query param
-            const downloadLink = `/download-single?url=${encodeURIComponent(imgUrl)}`;
-            
-            const iframe = document.createElement('iframe');
-            iframe.style.display = 'none';
-            iframe.src = downloadLink;
-            document.body.appendChild(iframe);
-            
-            // Cleanup iframe after a delay
-            setTimeout(() => document.body.removeChild(iframe), 60000);
-
-            // 500ms delay between downloads to prevent browser throttling
-            await new Promise(r => setTimeout(r, 500));
-        }
-        
-        document.getElementById('loadingOverlay').style.display = 'none';
     }
 </script>
 </body>

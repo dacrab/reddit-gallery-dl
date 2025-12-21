@@ -16,7 +16,7 @@ type RedditClient struct {
 
 func NewRedditClient() *RedditClient {
 	return &RedditClient{
-		client: &http.Client{Timeout: 15 * time.Second},
+		client: &http.Client{Timeout: 120 * time.Second},
 	}
 }
 

@@ -167,7 +167,9 @@ func (s *Server) handleDownloadZip(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		io.Copy(f, body)
+		if _, err := io.Copy(f, body); err != nil {
+			log.Printf("Error downloading/zipping image %s: %v", u, err)
+		}
 		body.Close()
 	}
 }
