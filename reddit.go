@@ -53,6 +53,7 @@ type redditPost struct {
 	Title       string `json:"title"`
 	IsGallery   bool   `json:"is_gallery"`
 	URL         string `json:"url_overridden_by_dest"`
+	PostHint    string `json:"post_hint"`
 	GalleryData *struct {
 		Items []struct {
 			MediaID string `json:"media_id"`
@@ -61,6 +62,17 @@ type redditPost struct {
 	MediaMetadata map[string]struct {
 		S struct{ U, Gif string } `json:"s"`
 	} `json:"media_metadata"`
+	Preview *struct {
+		Images []struct {
+			Variants struct {
+				Gif *struct {
+					Source struct {
+						URL string `json:"url"`
+					} `json:"source"`
+				} `json:"gif"`
+			} `json:"variants"`
+		} `json:"images"`
+	} `json:"preview"`
 }
 
 func (r *RedditClient) makeRequest(ctx context.Context, method, targetURL string) (*http.Response, error) {
@@ -155,6 +167,8 @@ func (r *RedditClient) StreamImage(ctx context.Context, urlStr string) (io.ReadC
 
 func extractImages(post redditPost) []string {
 	var images []string
+
+	// 1. Gallery Handling
 	if post.IsGallery && post.GalleryData != nil {
 		for _, item := range post.GalleryData.Items {
 			if media, ok := post.MediaMetadata[item.MediaID]; ok {
@@ -167,9 +181,23 @@ func extractImages(post redditPost) []string {
 				}
 			}
 		}
-	} else if post.URL != "" {
-		images = append(images, post.URL)
 	}
+
+	// 2. GIF/Video Preview Handling
+	if len(images) == 0 && post.Preview != nil {
+		for _, img := range post.Preview.Images {
+			if img.Variants.Gif != nil {
+				images = append(images, strings.ReplaceAll(img.Variants.Gif.Source.URL, "&amp;", "&"))
+			}
+		}
+	}
+
+	// 3. Fallback to direct URL
+	if len(images) == 0 && post.URL != "" {
+		// Check if it's a known image/gif extension or needs special handling
+		images = append(images, strings.ReplaceAll(post.URL, "&amp;", "&"))
+	}
+
 	return images
 }
 

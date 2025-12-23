@@ -93,29 +93,51 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDownloadSingle(w http.ResponseWriter, r *http.Request) {
 	rawURL := r.URL.Query().Get("url")
+	format := r.URL.Query().Get("format")
 	if rawURL == "" {
 		http.Error(w, "Missing URL", http.StatusBadRequest)
 		return
 	}
 
-	body, _, err := s.reddit.StreamImage(r.Context(), rawURL)
+	s.serveImage(w, r, rawURL, format)
+}
+
+func (s *Server) serveImage(w http.ResponseWriter, r *http.Request, rawURL, format string) {
+	body, ext, err := s.reddit.StreamImage(r.Context(), rawURL)
 	if err != nil {
 		http.Error(w, "Image download failed", http.StatusBadGateway)
 		return
 	}
 	defer body.Close()
 
-	u, _ := url.Parse(rawURL)
-	filename := "image.jpg"
-	if u != nil {
-		filename = path.Base(u.Path)
+	var data []byte
+	if format != "" && format != "original" {
+		data, ext, err = convertImage(body, format)
+		if err != nil {
+			log.Printf("Conversion error: %v", err)
+			http.Error(w, "Format conversion failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+	} else {
+		data, err = io.ReadAll(body)
+		if err != nil {
+			http.Error(w, "Read error", http.StatusInternalServerError)
+			return
+		}
 	}
-	if filename == "" || filename == "/" {
-		filename = "image.jpg"
+
+	u, _ := url.Parse(rawURL)
+	filename := "image" + ext
+	if u != nil {
+		base := path.Base(u.Path)
+		if strings.Contains(base, ".") {
+			filename = strings.TrimSuffix(base, path.Ext(base)) + ext
+		}
 	}
 
 	w.Header().Set("Content-Disposition", "attachment; filename="+filename)
-	io.Copy(w, body)
+	w.Header().Set("Content-Type", http.DetectContentType(data))
+	w.Write(data)
 }
 
 func (s *Server) handleDownloadZip(w http.ResponseWriter, r *http.Request) {
@@ -126,8 +148,15 @@ func (s *Server) handleDownloadZip(w http.ResponseWriter, r *http.Request) {
 
 	r.ParseForm()
 	urls := r.Form["image_urls"]
+	format := r.FormValue("format")
 	if len(urls) == 0 {
 		http.Error(w, "No images selected", http.StatusBadRequest)
+		return
+	}
+
+	// If only one image is selected, don't zip it
+	if len(urls) == 1 {
+		s.serveImage(w, r, urls[0], format)
 		return
 	}
 
@@ -139,9 +168,7 @@ func (s *Server) handleDownloadZip(w http.ResponseWriter, r *http.Request) {
 	z := zip.NewWriter(w)
 	defer z.Close()
 
-	// Process serially to minimize memory usage (Low RAM env compatible)
 	for i, u := range urls {
-		// Context check: stop if user disconnects
 		if r.Context().Err() != nil {
 			log.Println("Client disconnected, stopping zip stream.")
 			return
@@ -153,18 +180,33 @@ func (s *Server) handleDownloadZip(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
+		var data []byte
+		if format != "" && format != "original" {
+			data, ext, err = convertImage(body, format)
+			if err != nil {
+				log.Printf("Conversion error for %s: %v", u, err)
+				body.Close()
+				continue
+			}
+		} else {
+			data, err = io.ReadAll(body)
+			if err != nil {
+				log.Printf("Read error for %s: %v", u, err)
+				body.Close()
+				continue
+			}
+		}
+		body.Close()
+
 		f, err := z.Create(fmt.Sprintf("image_%03d%s", i+1, ext))
 		if err != nil {
-			body.Close()
 			log.Printf("Zip create error: %v", err)
 			continue
 		}
 
-		// Copy buffer (32KB chunks default)
-		if _, err := io.Copy(f, body); err != nil {
-			log.Printf("Stream error: %v", err)
+		if _, err := f.Write(data); err != nil {
+			log.Printf("Zip write error: %v", err)
 		}
-		body.Close()
 	}
 }
 

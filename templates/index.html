@@ -86,26 +86,9 @@
                 border-radius: 6px !important;
             }
         }
-        #loadingOverlay {
-            position: fixed;
-            top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(0,0,0,0.7);
-            z-index: 2000;
-            display: none;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            color: white;
-        }
     </style>
 </head>
 <body>
-
-<!-- Theme Toggle & Loading -->
-<div id="loadingOverlay">
-    <div class="spinner-border text-primary mb-3" role="status" style="width: 3rem; height: 3rem;"></div>
-    <h4 class="fw-light">Processing...</h4>
-</div>
 
 <nav class="navbar navbar-expand-lg border-bottom mb-4">
     <div class="container">
@@ -126,7 +109,7 @@
             <h1 class="display-6 fw-bold mb-3">Download Reddit Galleries</h1>
             <p class="text-secondary mb-4">Paste a link to view and download high-quality images.</p>
             
-            <form action="/" method="POST" class="d-flex gap-2 shadow-sm p-1 rounded-pill bg-body-tertiary border" onsubmit="showLoading()">
+            <form action="/" method="POST" class="d-flex gap-2 shadow-sm p-1 rounded-pill bg-body-tertiary border">
                 <input type="text" name="url" class="form-control form-control-lg border-0 rounded-pill bg-transparent ps-4" 
                        placeholder="https://www.reddit.com/r/..." value="{{ .URL }}" required autocomplete="off">
                 <button type="submit" class="btn btn-primary rounded-pill px-4 fw-bold">Fetch</button>
@@ -146,7 +129,7 @@
 
     <!-- Gallery Section -->
     {{ if .Images }}
-    <form action="/download-zip" method="POST" id="galleryForm" onsubmit="showLoading()">
+    <form action="/download-zip" method="POST" id="galleryForm">
         <input type="hidden" name="page_title" value="{{ .Title }}">
         
         <!-- Sticky Toolbar -->
@@ -157,10 +140,20 @@
             </div>
             
             <div class="btn-group btn-group-responsive">
+                <select name="format" class="form-select bg-body-tertiary border-secondary" style="width: auto;">
+                    <option value="original" selected>Original Format</option>
+                    <option value="jpg">Convert to JPG</option>
+                    <option value="png">Convert to PNG</option>
+                    <option value="gif">Convert to GIF</option>
+                </select>
                 <button type="button" class="btn btn-outline-secondary" onclick="toggleAll(true)">Select All</button>
                 <button type="button" class="btn btn-outline-secondary" onclick="toggleAll(false)">None</button>
                 <button type="submit" class="btn btn-success fw-bold">
+                    {{ if eq (len .Images) 1 }}
+                    <i class="bi bi-download"></i> Download
+                    {{ else }}
                     <i class="bi bi-file-zip"></i> Download ZIP
+                    {{ end }}
                 </button>
             </div>
         </div>
@@ -221,13 +214,35 @@
         document.querySelectorAll('input[name="image_urls"]').forEach(cb => cb.checked = checked);
     }
 
-    function showLoading() {
-        document.getElementById('loadingOverlay').style.display = 'flex';
-        // Hide after 5 seconds just in case (e.g. browser blocks download)
-        setTimeout(() => {
-            document.getElementById('loadingOverlay').style.display = 'none';
-        }, 5000);
-    }
+    // Format Update Logic
+    document.addEventListener('change', function(e) {
+        if (e.target && e.target.name === 'format') {
+            const format = e.target.value;
+            
+            // Update single download links in the grid
+            document.querySelectorAll('a[href*="/download-single"]').forEach(link => {
+                const url = new URL(link.href, window.location.origin);
+                url.searchParams.set('format', format);
+                link.href = url.pathname + url.search;
+            });
+
+            // Update main download button text if single image
+            const mainBtn = document.querySelector('#galleryForm button[type="submit"]');
+            if (mainBtn && mainBtn.innerText.includes('Download')) {
+                const icon = format === 'original' ? 'bi-download' : 'bi-file-earmark-arrow-down';
+                const text = format === 'original' ? 'Download' : `Download ${format.toUpperCase()}`;
+                mainBtn.innerHTML = `<i class="bi ${icon}"></i> ${text}`;
+            }
+        }
+    });
+
+    // Initialize links on load if needed
+    window.addEventListener('load', () => {
+        const formatSelect = document.querySelector('select[name="format"]');
+        if (formatSelect) {
+            formatSelect.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+    });
 </script>
 </body>
 </html>
