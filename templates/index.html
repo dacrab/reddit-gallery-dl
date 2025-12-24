@@ -5,228 +5,446 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Reddit Gallery Downloader</title>
     <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
+    <!-- Bootstrap 5 CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Bootstrap Icons -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+    
     <style>
         :root {
-            --card-height: 280px;
+            --bs-font-sans-serif: 'Inter', system-ui, -apple-system, sans-serif;
+            --card-transition: all 0.2s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+            --selected-border-color: #0d6efd;
+            --selected-bg-opacity: 0.1;
         }
+        
         body {
-            transition: background-color 0.3s, color 0.3s;
+            font-family: var(--bs-font-sans-serif);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            background-color: var(--bs-body-bg);
         }
-        .gallery-img {
-            width: 100%;
-            height: var(--card-height);
-            object-fit: cover;
-            border-radius: 8px 8px 0 0;
-            cursor: pointer;
-            transition: opacity 0.2s;
+
+        /* Hero Section */
+        .hero-section {
+            transition: all 0.5s ease;
+            padding: 4rem 1rem;
         }
-        .gallery-img:hover {
-            opacity: 0.9;
+        .hero-section.compact {
+            padding: 1rem 1rem;
+            border-bottom: 1px solid var(--bs-border-color);
         }
-        .img-card {
-            transition: transform 0.2s, box-shadow 0.2s;
-            border: none;
+
+        /* Search Input */
+        .search-container {
+            max-width: 700px;
+            margin: 0 auto;
+            position: relative;
+        }
+        .search-input {
+            border-radius: 50px;
+            padding: 1rem 1.5rem;
+            padding-right: 3.5rem; /* space for button */
+            border: 2px solid var(--bs-border-color);
+            transition: var(--card-transition);
+            font-size: 1.1rem;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        }
+        .search-input:focus {
+            border-color: var(--bs-primary);
+            box-shadow: 0 0 0 4px rgba(13, 110, 253, 0.15);
+        }
+        .search-btn {
+            position: absolute;
+            right: 8px;
+            top: 50%;
+            transform: translateY(-50%);
+            border-radius: 50%;
+            width: 42px;
+            height: 42px;
+            padding: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        /* Image Grid */
+        .gallery-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+            gap: 1.5rem;
+            padding: 2rem 0;
+        }
+        
+        .image-card {
+            position: relative;
+            border-radius: 12px;
             overflow: hidden;
+            cursor: pointer;
+            transition: var(--card-transition);
+            aspect-ratio: 1; /* Square cards */
+            background-color: var(--bs-tertiary-bg);
+            border: 2px solid transparent;
         }
-        .img-card:hover {
+        
+        .image-card:hover {
             transform: translateY(-4px);
-            box-shadow: 0 8px 20px rgba(0,0,0,0.2);
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
         }
-        .checkbox-wrapper {
+        
+        .image-card.selected {
+            border-color: var(--selected-border-color);
+            transform: scale(0.98);
+        }
+        
+        .image-card.selected::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background-color: rgba(13, 110, 253, 0.2);
+            pointer-events: none;
+        }
+        
+        .image-card img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transition: transform 0.3s ease;
+        }
+
+        /* Checkmark Badge */
+        .check-badge {
             position: absolute;
             top: 10px;
-            left: 10px;
+            right: 10px;
+            width: 28px;
+            height: 28px;
+            background: var(--bs-primary);
+            color: white;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            opacity: 0;
+            transform: scale(0.8);
+            transition: var(--card-transition);
             z-index: 10;
-            background: rgba(0, 0, 0, 0.6);
-            border-radius: 50%;
-            width: 32px;
-            height: 32px;
+        }
+        
+        .image-card.selected .check-badge {
+            opacity: 1;
+            transform: scale(1);
+        }
+
+        /* Hover Actions */
+        .card-actions {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            padding: 1rem;
+            background: linear-gradient(to top, rgba(0,0,0,0.8), transparent);
+            opacity: 0;
+            transition: var(--card-transition);
             display: flex;
-            align-items: center;
-            justify-content: center;
-            backdrop-filter: blur(2px);
+            justify-content: flex-end;
+            gap: 0.5rem;
         }
-        .form-check-input {
-            width: 1.2em;
-            height: 1.2em;
-            margin: 0;
-            cursor: pointer;
+        
+        .image-card:hover .card-actions {
+            opacity: 1;
         }
-        .sticky-toolbar {
-            background: rgba(var(--bs-body-bg-rgb), 0.95);
-            backdrop-filter: blur(10px);
-            border-bottom: 1px solid var(--bs-border-color);
-            transition: background-color 0.3s;
-        }
-        .btn-floating {
+
+        /* Floating Action Bar */
+        .action-bar {
             position: fixed;
-            bottom: 20px;
-            right: 20px;
-            border-radius: 50%;
-            width: 50px;
-            height: 50px;
+            bottom: 2rem;
+            left: 50%;
+            transform: translateX(-50%) translateY(150%);
+            background: var(--bs-body-bg);
+            border: 1px solid var(--bs-border-color);
+            padding: 0.75rem 1.5rem;
+            border-radius: 100px;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3);
             display: flex;
             align-items: center;
-            justify-content: center;
+            gap: 1rem;
+            transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
             z-index: 1000;
-            box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+            max-width: 90vw;
         }
-        /* Mobile Tweaks */
-        @media (max-width: 576px) {
-            :root { --card-height: 200px; }
-            .btn-group-responsive {
-                flex-direction: column;
-                width: 100%;
-                gap: 5px;
-            }
-            .btn-group-responsive .btn {
-                width: 100%;
-                border-radius: 6px !important;
-            }
+        
+        .action-bar.visible {
+            transform: translateX(-50%) translateY(0);
+        }
+
+        /* Loading Spinner Overlay */
+        #loadingOverlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.5);
+            backdrop-filter: blur(5px);
+            z-index: 2000;
+            display: none;
+            align-items: center;
+            justify-content: center;
+        }
+
+        /* Utilities */
+        .btn-icon {
+            width: 36px;
+            height: 36px;
+            padding: 0;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+        }
+        
+        .text-balance {
+            text-wrap: balance;
         }
     </style>
 </head>
 <body>
 
-<nav class="navbar navbar-expand-lg border-bottom mb-4">
-    <div class="container">
-        <a class="navbar-brand fw-bold d-flex align-items-center gap-2" href="/">
-            <img src="/static/favicon.svg" width="32" height="32" alt="Logo">
-            Reddit Gallery DL
-        </a>
-        <button class="btn btn-outline-secondary btn-sm ms-auto" onclick="toggleTheme()" id="themeBtn">
-            <i class="bi bi-sun-fill"></i>
-        </button>
-    </div>
-</nav>
-
-<div class="container pb-5">
-    <div class="row justify-content-center mb-5">
-        <div class="col-lg-8 text-center">
-            <h1 class="display-6 fw-bold mb-3">Download Reddit Galleries</h1>
-            <p class="text-secondary mb-4">Paste a link to view and download high-quality images.</p>
-            
-            <form action="/" method="POST" class="d-flex gap-2 shadow-sm p-1 rounded-pill bg-body-tertiary border">
-                <input type="text" name="url" class="form-control form-control-lg border-0 rounded-pill bg-transparent ps-4" 
-                       placeholder="https://www.reddit.com/r/..." value="{{ .URL }}" required autocomplete="off">
-                <button type="submit" class="btn btn-primary rounded-pill px-4 fw-bold">Fetch</button>
-            </form>
+    <!-- Loading Overlay -->
+    <div id="loadingOverlay">
+        <div class="spinner-border text-primary" role="status" style="width: 3rem; height: 3rem;">
+            <span class="visually-hidden">Loading...</span>
         </div>
     </div>
 
-    {{ if .Alert }}
-    <div class="alert alert-{{ .Alert.Type }} d-flex align-items-center justify-content-center gap-2 shadow-sm" role="alert">
-        {{ if eq .Alert.Type "success" }}<i class="bi bi-check-circle-fill"></i>{{ end }}
-        {{ if eq .Alert.Type "warning" }}<i class="bi bi-exclamation-triangle-fill"></i>{{ end }}
-        {{ if eq .Alert.Type "danger" }}<i class="bi bi-x-circle-fill"></i>{{ end }}
-        {{ .Alert.Message }}
-    </div>
-    {{ end }}
-
-    {{ if .Images }}
-    <form action="/download-zip" method="POST" id="galleryForm">
-        <input type="hidden" name="page_title" value="{{ .Title }}">
-        <div class="sticky-toolbar sticky-top py-3 mb-4 rounded-3 px-3 shadow-sm d-flex flex-wrap align-items-center justify-content-between gap-3">
-            <div class="d-flex align-items-center gap-2 overflow-hidden">
-                <span class="badge bg-primary rounded-pill">{{ len .Images }}</span>
-                <h5 class="m-0 text-truncate">{{ .Title }}</h5>
-            </div>
-            
-            <div class="btn-group btn-group-responsive">
-                <select name="format" class="form-select bg-body-tertiary border-secondary" style="width: auto;">
-                    <option value="original" selected>Original Format</option>
-                    <option value="jpg">Convert to JPG</option>
-                    <option value="png">Convert to PNG</option>
-                    <option value="gif">Convert to GIF</option>
-                </select>
-                <button type="button" class="btn btn-outline-secondary" onclick="toggleAll(true)">Select All</button>
-                <button type="button" class="btn btn-outline-secondary" onclick="toggleAll(false)">None</button>
-                <button type="submit" class="btn btn-success fw-bold">
-                    {{ if eq (len .Images) 1 }}
-                    <i class="bi bi-download"></i> Download
-                    {{ else }}
-                    <i class="bi bi-file-zip"></i> Download ZIP
-                    {{ end }}
+    <!-- Navigation -->
+    <nav class="navbar navbar-expand px-3 py-3">
+        <div class="container-fluid">
+            <a class="navbar-brand fw-bold d-flex align-items-center gap-2" href="/">
+                <img src="/static/favicon.svg" width="28" height="28" alt="Logo" class="d-inline-block align-text-top">
+                <span>Gallery<span class="text-primary">DL</span></span>
+            </a>
+            <div class="ms-auto">
+                <button class="btn btn-outline-secondary btn-icon border-0" onclick="toggleTheme()" id="themeBtn" title="Toggle Theme">
+                    <i class="bi bi-moon-stars-fill"></i>
                 </button>
             </div>
         </div>
-        <div class="row g-3">
-            {{ range .Images }}
-            <div class="col-6 col-md-4 col-lg-3">
-                <div class="card img-card h-100">
-                    <div class="checkbox-wrapper">
-                        <input type="checkbox" name="image_urls" value="{{ . }}" class="form-check-input" checked>
-                    </div>
-                    
-                    <a href="{{ . }}" target="_blank">
-                        <img src="{{ . }}" class="gallery-img card-img-top" alt="Reddit Image" loading="lazy">
-                    </a>
-                    
-                    <div class="card-body p-2 d-flex gap-2 align-items-center justify-content-center bg-body-tertiary">
-                        <a href="{{ . }}" target="_blank" class="btn btn-sm btn-outline-secondary w-50" title="View Original">
-                            <i class="bi bi-eye"></i> View
-                        </a>
-                        <a href="/download-single?url={{ . }}" class="btn btn-sm btn-primary w-50" title="Download File" download>
-                            <i class="bi bi-download"></i> Save
-                        </a>
-                    </div>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="flex-grow-1">
+        
+        <!-- Hero / Search Section -->
+        <section class="hero-section {{ if .Images }}compact{{ end }}">
+            <div class="container text-center">
+                {{ if not .Images }}
+                <h1 class="display-4 fw-bold mb-3 text-balance">Download Reddit Galleries in Seconds</h1>
+                <p class="text-secondary mb-5 fs-5">Paste a Reddit link below to view and download high-quality images.</p>
+                {{ end }}
+                
+                <form action="/" method="POST" class="search-container" onsubmit="showLoading()">
+                    <input type="text" name="url" class="form-control search-input" 
+                           placeholder="Paste Reddit URL here (e.g., https://reddit.com/r/...)" 
+                           value="{{ .URL }}" required autocomplete="off" autofocus>
+                    <button type="submit" class="btn btn-primary search-btn">
+                        <i class="bi bi-arrow-right fs-5"></i>
+                    </button>
+                </form>
+            </div>
+        </section>
+
+        <!-- Alerts -->
+        {{ if .Alert }}
+        <div class="container mt-4">
+            <div class="alert alert-{{ .Alert.Type }} border-0 shadow-sm d-flex align-items-center gap-3 rounded-4" role="alert">
+                <i class="bi {{ if eq .Alert.Type "success" }}bi-check-circle-fill text-success{{ else }}bi-exclamation-circle-fill text-danger{{ end }} fs-4"></i>
+                <div>
+                    {{ .Alert.Message }}
                 </div>
             </div>
-            {{ end }}
         </div>
-    </form>
-    {{ end }}
-</div>
+        {{ end }}
 
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-<script>
-    function toggleTheme() {
-        const html = document.documentElement;
-        const current = html.getAttribute('data-bs-theme');
-        const next = current === 'dark' ? 'light' : 'dark';
-        html.setAttribute('data-bs-theme', next);
-        localStorage.setItem('theme', next);
-        updateThemeIcon(next);
-    }
+        <!-- Gallery Grid -->
+        {{ if .Images }}
+        <form action="/download-zip" method="POST" id="galleryForm">
+            <input type="hidden" name="page_title" value="{{ .Title }}">
+            
+            <div class="container">
+                <div class="d-flex align-items-center justify-content-between mt-4 mb-2">
+                    <h5 class="text-secondary fw-normal mb-0"><span id="countDisplay">{{ len .Images }}</span> images found</h5>
+                    <div class="d-flex gap-2">
+                         <button type="button" class="btn btn-sm btn-outline-secondary rounded-pill px-3" onclick="selectAll()">Select All</button>
+                         <button type="button" class="btn btn-sm btn-outline-secondary rounded-pill px-3" onclick="deselectAll()">None</button>
+                    </div>
+                </div>
 
-    function updateThemeIcon(theme) {
-        const btn = document.getElementById('themeBtn');
-        btn.innerHTML = theme === 'dark' ? '<i class="bi bi-moon-fill"></i>' : '<i class="bi bi-sun-fill"></i>';
-    }
+                <div class="gallery-grid">
+                    {{ range $i, $url := .Images }}
+                    <div class="image-card selected" onclick="toggleSelection(this)">
+                        <div class="check-badge">
+                            <i class="bi bi-check-lg"></i>
+                        </div>
+                        
+                        <!-- Hidden Checkbox for Form Submission -->
+                        <input type="checkbox" name="image_urls" value="{{ $url }}" checked class="d-none">
+                        
+                        <img src="{{ $url }}" alt="Gallery Image {{ $i }}" loading="lazy">
+                        
+                        <div class="card-actions" onclick="event.stopPropagation()">
+                            <a href="{{ $url }}" target="_blank" class="btn btn-light btn-icon rounded-circle shadow-sm" title="View Full Size">
+                                <i class="bi bi-arrows-fullscreen"></i>
+                            </a>
+                        </div>
+                    </div>
+                    {{ end }}
+                </div>
+            </div>
 
-    const savedTheme = localStorage.getItem('theme') || 'dark';
-    document.documentElement.setAttribute('data-bs-theme', savedTheme);
-    updateThemeIcon(savedTheme);
+            <!-- Floating Action Bar -->
+            <div class="action-bar visible" id="actionBar">
+                <div class="d-flex align-items-center gap-3 border-end pe-3 me-1">
+                    <span class="fw-bold" id="selectedCount">{{ len .Images }}</span>
+                    <span class="text-secondary small">selected</span>
+                </div>
+                
+                <div class="input-group input-group-sm flex-nowrap align-items-center">
+                    <span class="input-group-text bg-transparent border-0 text-secondary ps-0 pe-2">Format:</span>
+                    <select name="format" class="form-select border rounded-pill bg-body-tertiary py-1 ps-3 pe-5" style="width: auto; cursor: pointer; min-width: 110px;" id="formatSelect">
+                        <option value="original" selected>Original</option>
+                        <option value="jpg">JPG</option>
+                        <option value="png">PNG</option>
+                    </select>
+                </div>
 
-    function toggleAll(checked) {
-        document.querySelectorAll('input[name="image_urls"]').forEach(cb => cb.checked = checked);
-    }
+                <button type="submit" class="btn btn-primary rounded-pill px-4 fw-bold shadow-sm d-flex align-items-center gap-2 text-nowrap" id="downloadBtn">
+                    <i class="bi bi-download"></i>
+                    <span id="downloadText">Download</span>
+                </button>
+            </div>
+        </form>
+        {{ end }}
+        
+        <!-- Empty State / Footer -->
+        {{ if not .Images }}
+        <div class="text-center text-secondary opacity-50 mt-5 pt-5">
+            <i class="bi bi-images display-1"></i>
+        </div>
+        {{ end }}
 
-    document.addEventListener('change', function(e) {
-        if (e.target?.name === 'format') {
-            const format = e.target.value;
-            document.querySelectorAll('a[href*="/download-single"]').forEach(link => {
-                const url = new URL(link.href, window.location.origin);
-                url.searchParams.set('format', format);
-                link.href = url.pathname + url.search;
-            });
-            const mainBtn = document.querySelector('#galleryForm button[type="submit"]');
-            if (mainBtn?.innerText.includes('Download')) {
-                const icon = format === 'original' ? 'bi-download' : 'bi-file-earmark-arrow-down';
-                const text = format === 'original' ? 'Download' : `Download ${format.toUpperCase()}`;
-                mainBtn.innerHTML = `<i class="bi ${icon}"></i> ${text}`;
+    </main>
+
+    <footer class="text-center py-4 text-secondary small">
+        <p class="mb-0">Designed for simplicity {{ if .Title }}&bull; {{ .Title }}{{ end }}</p>
+    </footer>
+
+    <!-- JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Theme Management
+        function toggleTheme() {
+            const html = document.documentElement;
+            const current = html.getAttribute('data-bs-theme');
+            const next = current === 'dark' ? 'light' : 'dark';
+            html.setAttribute('data-bs-theme', next);
+            localStorage.setItem('theme', next);
+            updateThemeIcon(next);
+        }
+
+        function updateThemeIcon(theme) {
+            const btn = document.getElementById('themeBtn');
+            const icon = btn.querySelector('i');
+            if (theme === 'dark') {
+                icon.className = 'bi bi-moon-stars-fill';
+            } else {
+                icon.className = 'bi bi-sun-fill';
             }
         }
-    });
 
-    window.addEventListener('load', () => {
-        const formatSelect = document.querySelector('select[name="format"]');
-        if (formatSelect) {
-            formatSelect.dispatchEvent(new Event('change', { bubbles: true }));
+        // Initialize Theme
+        const savedTheme = localStorage.getItem('theme') || 'dark';
+        document.documentElement.setAttribute('data-bs-theme', savedTheme);
+        updateThemeIcon(savedTheme);
+
+        // Selection Logic
+        function toggleSelection(card) {
+            const checkbox = card.querySelector('input[type="checkbox"]');
+            checkbox.checked = !checkbox.checked;
+            
+            if (checkbox.checked) {
+                card.classList.add('selected');
+            } else {
+                card.classList.remove('selected');
+            }
+            updateActionBar();
         }
-    });
-</script>
+
+        function selectAll() {
+            document.querySelectorAll('.image-card').forEach(card => {
+                const checkbox = card.querySelector('input[type="checkbox"]');
+                if (!checkbox.checked) {
+                    checkbox.checked = true;
+                    card.classList.add('selected');
+                }
+            });
+            updateActionBar();
+        }
+
+        function deselectAll() {
+            document.querySelectorAll('.image-card').forEach(card => {
+                const checkbox = card.querySelector('input[type="checkbox"]');
+                if (checkbox.checked) {
+                    checkbox.checked = false;
+                    card.classList.remove('selected');
+                }
+            });
+            updateActionBar();
+        }
+
+        function updateActionBar() {
+            const total = document.querySelectorAll('input[name="image_urls"]').length;
+            const selected = document.querySelectorAll('input[name="image_urls"]:checked').length;
+            const bar = document.getElementById('actionBar');
+            const countSpan = document.getElementById('selectedCount');
+            const submitBtn = bar.querySelector('button[type="submit"]');
+
+            if (selected > 0) {
+                bar.classList.add('visible');
+                countSpan.textContent = selected;
+                submitBtn.disabled = false;
+            } else {
+                bar.classList.remove('visible');
+                submitBtn.disabled = true; // Prevent submission with 0 items
+            }
+        }
+
+        // Format Selection Logic
+        const formatSelect = document.getElementById('formatSelect');
+        if (formatSelect) {
+            formatSelect.addEventListener('change', function() {
+                const format = this.value;
+                const btnText = document.getElementById('downloadText');
+                if (format === 'original') {
+                    btnText.textContent = 'Download';
+                } else {
+                    btnText.textContent = `Download ${format.toUpperCase()}`;
+                }
+            });
+        }
+
+        function showLoading() {
+            document.getElementById('loadingOverlay').style.display = 'flex';
+        }
+
+        // Auto-focus input on load if empty
+        window.addEventListener('load', () => {
+            const input = document.querySelector('.search-input');
+            if (input && !input.value) {
+                input.focus();
+            }
+        });
+    </script>
 </body>
 </html>

@@ -53,7 +53,6 @@ type redditPost struct {
 	Title       string `json:"title"`
 	IsGallery   bool   `json:"is_gallery"`
 	URL         string `json:"url_overridden_by_dest"`
-	PostHint    string `json:"post_hint"`
 	GalleryData *struct {
 		Items []struct {
 			MediaID string `json:"media_id"`

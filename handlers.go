@@ -2,7 +2,6 @@ package main
 
 import (
 	"archive/zip"
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -13,6 +12,7 @@ import (
 	"image/png"
 	"io"
 	"log"
+	"mime"
 	"net/http"
 	"net/url"
 	"path"
@@ -57,7 +57,7 @@ type TemplateData struct {
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		s.tmpl.ExecuteTemplate(w, "index.html", nil)
+		s.tmpl.ExecuteTemplate(w, "index.html", TemplateData{})
 		return
 	}
 
@@ -92,28 +92,39 @@ func (s *Server) handleDownloadSingle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.serveImage(w, r, rawURL, format)
+	s.serveSingleImage(w, r.Context(), rawURL, format)
 }
 
-func (s *Server) serveImage(w http.ResponseWriter, r *http.Request, rawURL, format string) {
-	data, ext, err := s.downloadAndConvert(r.Context(), rawURL, format)
+func (s *Server) serveSingleImage(w http.ResponseWriter, ctx context.Context, rawURL, format string) {
+	body, ext, err := s.reddit.StreamImage(ctx, rawURL)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
+	defer body.Close()
 
-	u, _ := url.Parse(rawURL)
-	filename := "image" + ext
-	if u != nil {
-		base := path.Base(u.Path)
-		if strings.Contains(base, ".") {
-			filename = strings.TrimSuffix(base, path.Ext(base)) + ext
+	finalExt := ext
+	if format != "" && format != "original" {
+		finalExt = "." + format
+		if format == "jpeg" {
+			finalExt = ".jpg"
 		}
 	}
 
-	w.Header().Set("Content-Disposition", "attachment; filename="+filename)
-	w.Header().Set("Content-Type", http.DetectContentType(data))
-	w.Write(data)
+	filename := "image" + finalExt
+	if u, _ := url.Parse(rawURL); u != nil {
+		base := path.Base(u.Path)
+		if strings.Contains(base, ".") {
+			filename = strings.TrimSuffix(base, path.Ext(base)) + finalExt
+		}
+	}
+
+	w.Header().Set("Content-Disposition", "attachment; filename=\""+filename+"\"")
+	w.Header().Set("Content-Type", mime.TypeByExtension(finalExt))
+
+	if err := s.streamImage(body, format, w); err != nil {
+		log.Printf("Error streaming single image: %v", err)
+	}
 }
 
 func (s *Server) handleDownloadZip(w http.ResponseWriter, r *http.Request) {
@@ -130,13 +141,11 @@ func (s *Server) handleDownloadZip(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// If only one image is selected, don't zip it
 	if len(urls) == 1 {
-		s.serveImage(w, r, urls[0], format)
+		s.serveSingleImage(w, r.Context(), urls[0], format)
 		return
 	}
 
-	// Sanitize title
 	title := cleanFilename(r.FormValue("page_title"))
 	w.Header().Set("Content-Type", "application/zip")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s.zip\"", title))
@@ -150,65 +159,55 @@ func (s *Server) handleDownloadZip(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		data, ext, err := s.downloadAndConvert(r.Context(), u, format)
+		body, ext, err := s.reddit.StreamImage(r.Context(), u)
 		if err != nil {
 			log.Printf("Skipping %s: %v", u, err)
 			continue
 		}
 
-		f, err := z.Create(fmt.Sprintf("image_%03d%s", i+1, ext))
+		finalExt := ext
+		if format != "" && format != "original" {
+			finalExt = "." + format
+			if format == "jpeg" {
+				finalExt = ".jpg"
+			}
+		}
+
+		f, err := z.Create(fmt.Sprintf("image_%03d%s", i+1, finalExt))
 		if err != nil {
+			body.Close()
 			log.Printf("Zip create error: %v", err)
 			continue
 		}
 
-		if _, err := f.Write(data); err != nil {
-			log.Printf("Zip write error: %v", err)
+		if err := s.streamImage(body, format, f); err != nil {
+			log.Printf("Zip write error for %s: %v", u, err)
 		}
+		body.Close()
 	}
 }
 
-func (s *Server) downloadAndConvert(ctx context.Context, urlStr, format string) ([]byte, string, error) {
-	body, ext, err := s.reddit.StreamImage(ctx, urlStr)
+// streamImage streams the image from src to dst, converting it on-the-fly if needed.
+func (s *Server) streamImage(src io.Reader, format string, dst io.Writer) error {
+	if format == "" || format == "original" {
+		_, err := io.Copy(dst, src)
+		return err
+	}
+
+	img, _, err := image.Decode(src)
 	if err != nil {
-		return nil, "", fmt.Errorf("download failed: %w", err)
+		return fmt.Errorf("decode: %w", err)
 	}
-	defer body.Close()
-
-	if format != "" && format != "original" {
-		return convertImage(body, format)
-	}
-	data, err := io.ReadAll(body)
-	return data, ext, err
-}
-
-func convertImage(input io.Reader, format string) ([]byte, string, error) {
-	img, _, err := image.Decode(input)
-	if err != nil {
-		return nil, "", fmt.Errorf("decode: %w", err)
-	}
-
-	var buf bytes.Buffer
-	var ext string
 
 	switch format {
 	case "jpg", "jpeg":
-		err = jpeg.Encode(&buf, img, &jpeg.Options{Quality: 90})
-		ext = ".jpg"
+		return jpeg.Encode(dst, img, &jpeg.Options{Quality: 90})
 	case "png":
-		err = png.Encode(&buf, img)
-		ext = ".png"
+		return png.Encode(dst, img)
 	case "gif":
-		err = gif.Encode(&buf, img, nil)
-		ext = ".gif"
-	default:
-		return nil, "", fmt.Errorf("unsupported format: %s", format)
+		return gif.Encode(dst, img, nil)
 	}
-
-	if err != nil {
-		return nil, "", fmt.Errorf("encode: %w", err)
-	}
-	return buf.Bytes(), ext, nil
+	return fmt.Errorf("unsupported format: %s", format)
 }
 
 func cleanFilename(s string) string {
