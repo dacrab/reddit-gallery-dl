@@ -2,9 +2,15 @@ package main
 
 import (
 	"archive/zip"
+	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"html/template"
+	"image"
+	"image/gif"
+	"image/jpeg"
+	"image/png"
 	"io"
 	"log"
 	"net/http"
@@ -12,6 +18,8 @@ import (
 	"path"
 	"strings"
 	"unicode"
+
+	_ "golang.org/x/image/webp"
 )
 
 type Server struct {
@@ -54,29 +62,17 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	urlStr := r.FormValue("url")
-
-	// Use Context for cancellation
 	gallery, err := s.reddit.FetchGallery(r.Context(), urlStr)
 	if err != nil {
-		alertMsg := err.Error()
-		alertType := "danger"
-
-		// Senior Error Handling: Type assertions / Sentinel checks
+		alert := &Alert{Message: err.Error(), Type: "danger"}
 		if errors.Is(err, ErrInvalidURL) {
-			alertMsg = "That doesn't look like a valid Reddit link."
-			alertType = "warning"
+			alert = &Alert{Message: "That doesn't look like a valid Reddit link.", Type: "warning"}
 		} else if errors.Is(err, ErrPostNotFound) {
-			alertMsg = "Post not found. It might be deleted or private."
-			alertType = "warning"
+			alert = &Alert{Message: "Post not found. It might be deleted or private.", Type: "warning"}
 		} else if errors.Is(err, ErrNoImages) {
-			alertMsg = "This post exists but has no images."
-			alertType = "info"
+			alert = &Alert{Message: "This post exists but has no images.", Type: "info"}
 		}
-
-		s.tmpl.ExecuteTemplate(w, "index.html", TemplateData{
-			URL:   urlStr,
-			Alert: &Alert{Message: alertMsg, Type: alertType},
-		})
+		s.tmpl.ExecuteTemplate(w, "index.html", TemplateData{URL: urlStr, Alert: alert})
 		return
 	}
 
@@ -84,10 +80,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		Title:  gallery.Title,
 		Images: gallery.Images,
 		URL:    urlStr,
-		Alert: &Alert{
-			Message: fmt.Sprintf("Loaded %d images!", len(gallery.Images)),
-			Type:    "success",
-		},
+		Alert:  &Alert{Message: fmt.Sprintf("Loaded %d images!", len(gallery.Images)), Type: "success"},
 	})
 }
 
@@ -103,27 +96,10 @@ func (s *Server) handleDownloadSingle(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) serveImage(w http.ResponseWriter, r *http.Request, rawURL, format string) {
-	body, ext, err := s.reddit.StreamImage(r.Context(), rawURL)
+	data, ext, err := s.downloadAndConvert(r.Context(), rawURL, format)
 	if err != nil {
-		http.Error(w, "Image download failed", http.StatusBadGateway)
+		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
-	}
-	defer body.Close()
-
-	var data []byte
-	if format != "" && format != "original" {
-		data, ext, err = convertImage(body, format)
-		if err != nil {
-			log.Printf("Conversion error: %v", err)
-			http.Error(w, "Format conversion failed: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-	} else {
-		data, err = io.ReadAll(body)
-		if err != nil {
-			http.Error(w, "Read error", http.StatusInternalServerError)
-			return
-		}
 	}
 
 	u, _ := url.Parse(rawURL)
@@ -174,29 +150,11 @@ func (s *Server) handleDownloadZip(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		body, ext, err := s.reddit.StreamImage(r.Context(), u)
+		data, ext, err := s.downloadAndConvert(r.Context(), u, format)
 		if err != nil {
 			log.Printf("Skipping %s: %v", u, err)
 			continue
 		}
-
-		var data []byte
-		if format != "" && format != "original" {
-			data, ext, err = convertImage(body, format)
-			if err != nil {
-				log.Printf("Conversion error for %s: %v", u, err)
-				body.Close()
-				continue
-			}
-		} else {
-			data, err = io.ReadAll(body)
-			if err != nil {
-				log.Printf("Read error for %s: %v", u, err)
-				body.Close()
-				continue
-			}
-		}
-		body.Close()
 
 		f, err := z.Create(fmt.Sprintf("image_%03d%s", i+1, ext))
 		if err != nil {
@@ -208,6 +166,49 @@ func (s *Server) handleDownloadZip(w http.ResponseWriter, r *http.Request) {
 			log.Printf("Zip write error: %v", err)
 		}
 	}
+}
+
+func (s *Server) downloadAndConvert(ctx context.Context, urlStr, format string) ([]byte, string, error) {
+	body, ext, err := s.reddit.StreamImage(ctx, urlStr)
+	if err != nil {
+		return nil, "", fmt.Errorf("download failed: %w", err)
+	}
+	defer body.Close()
+
+	if format != "" && format != "original" {
+		return convertImage(body, format)
+	}
+	data, err := io.ReadAll(body)
+	return data, ext, err
+}
+
+func convertImage(input io.Reader, format string) ([]byte, string, error) {
+	img, _, err := image.Decode(input)
+	if err != nil {
+		return nil, "", fmt.Errorf("decode: %w", err)
+	}
+
+	var buf bytes.Buffer
+	var ext string
+
+	switch format {
+	case "jpg", "jpeg":
+		err = jpeg.Encode(&buf, img, &jpeg.Options{Quality: 90})
+		ext = ".jpg"
+	case "png":
+		err = png.Encode(&buf, img)
+		ext = ".png"
+	case "gif":
+		err = gif.Encode(&buf, img, nil)
+		ext = ".gif"
+	default:
+		return nil, "", fmt.Errorf("unsupported format: %s", format)
+	}
+
+	if err != nil {
+		return nil, "", fmt.Errorf("encode: %w", err)
+	}
+	return buf.Bytes(), ext, nil
 }
 
 func cleanFilename(s string) string {

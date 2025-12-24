@@ -1,7 +1,6 @@
-__pycache__
-*.pyc
 .git
+.gitignore
 .env
-venv/
-*.zip
-debug_reddit.py
+*.md
+reddit-gallery-dl
+*.test

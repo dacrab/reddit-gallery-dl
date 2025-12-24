@@ -28,7 +28,7 @@ Visit **http://localhost:5000**.
 
 ### 💻 Local Development
 
-Requires **Go 1.22+**.
+Requires **Go 1.24+**.
 
 ```bash
 # Clone the repository
@@ -52,9 +52,9 @@ Perfect for PaaS providers like **Render**, **Railway**, or **Fly.io**.
 
 ## 🏗️ Architecture
 
--   **`reddit.go`**: Encapsulated API client with typed errors and context support.
--   **`handlers.go`**: HTTP layer managing templates, validation, and ZIP streaming.
--   **`main.go`**: Configuration and server startup.
+-   **`reddit.go`**: Reddit API client with typed errors and context support.
+-   **`handlers.go`**: HTTP handlers, templates, image conversion, and ZIP streaming.
+-   **`main.go`**: Server initialization and startup.
 
 ## 📄 License
 

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"net/url"
 	"path"
@@ -40,7 +41,6 @@ type Gallery struct {
 	URL    string
 }
 
-// JSON Structs
 type redditResponse []struct {
 	Data struct {
 		Children []struct {
@@ -91,8 +91,7 @@ func (r *RedditClient) FetchGallery(ctx context.Context, postURL string) (*Galle
 		return nil, err
 	}
 
-	apiURL := fmt.Sprintf("%s.json", strings.TrimRight(resolvedURL, "/"))
-	resp, err := r.makeRequest(ctx, "GET", apiURL)
+	resp, err := r.makeRequest(ctx, "GET", fmt.Sprintf("%s.json", strings.TrimRight(resolvedURL, "/")))
 	if err != nil {
 		return nil, err
 	}
@@ -104,7 +103,7 @@ func (r *RedditClient) FetchGallery(ctx context.Context, postURL string) (*Galle
 
 	var data redditResponse
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-		return nil, fmt.Errorf("json decode error: %w", err)
+		return nil, fmt.Errorf("json decode: %w", err)
 	}
 
 	if len(data) == 0 || len(data[0].Data.Children) == 0 {
@@ -113,16 +112,11 @@ func (r *RedditClient) FetchGallery(ctx context.Context, postURL string) (*Galle
 
 	post := data[0].Data.Children[0].Data
 	images := extractImages(post)
-
 	if len(images) == 0 {
 		return nil, ErrNoImages
 	}
 
-	return &Gallery{
-		Title:  post.Title,
-		Images: images,
-		URL:    postURL,
-	}, nil
+	return &Gallery{Title: post.Title, Images: images, URL: postURL}, nil
 }
 
 func (r *RedditClient) resolveURL(ctx context.Context, inputURL string) (string, error) {
@@ -168,11 +162,9 @@ func (r *RedditClient) StreamImage(ctx context.Context, urlStr string) (io.ReadC
 func extractImages(post redditPost) []string {
 	var images []string
 
-	// 1. Gallery Handling
 	if post.IsGallery && post.GalleryData != nil {
 		for _, item := range post.GalleryData.Items {
 			if media, ok := post.MediaMetadata[item.MediaID]; ok {
-				// Prefer GIF URL if available, otherwise use static image
 				raw := media.S.Gif
 				if raw == "" {
 					raw = media.S.U
@@ -184,7 +176,6 @@ func extractImages(post redditPost) []string {
 		}
 	}
 
-	// 2. GIF/Video Preview Handling
 	if len(images) == 0 && post.Preview != nil {
 		for _, img := range post.Preview.Images {
 			if img.Variants.Gif != nil {
@@ -193,9 +184,7 @@ func extractImages(post redditPost) []string {
 		}
 	}
 
-	// 3. Fallback to direct URL
 	if len(images) == 0 && post.URL != "" {
-		// Check if it's a known image/gif extension or needs special handling
 		images = append(images, strings.ReplaceAll(post.URL, "&amp;", "&"))
 	}
 
@@ -203,14 +192,13 @@ func extractImages(post redditPost) []string {
 }
 
 func detectExtension(urlStr, contentType string) string {
-	if strings.Contains(contentType, "png") {
-		return ".png"
+	if contentType != "" {
+		exts, _ := mime.ExtensionsByType(contentType)
+		if len(exts) > 0 {
+			return exts[0]
+		}
 	}
-	if strings.Contains(contentType, "gif") {
-		return ".gif"
-	}
-	u, err := url.Parse(urlStr)
-	if err == nil {
+	if u, err := url.Parse(urlStr); err == nil {
 		ext := strings.ToLower(path.Ext(u.Path))
 		if ext == ".png" || ext == ".gif" || ext == ".jpg" || ext == ".jpeg" {
 			return ext
