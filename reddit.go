@@ -172,9 +172,10 @@ func extractImages(post redditPost) []string {
 	if post.IsGallery && post.GalleryData != nil {
 		for _, item := range post.GalleryData.Items {
 			if media, ok := post.MediaMetadata[item.MediaID]; ok {
-				raw := media.S.U
+				// Prefer GIF URL if available, otherwise use static image
+				raw := media.S.Gif
 				if raw == "" {
-					raw = media.S.Gif
+					raw = media.S.U
 				}
 				if raw != "" {
 					images = append(images, strings.ReplaceAll(raw, "&amp;", "&"))
