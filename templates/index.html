@@ -260,7 +260,7 @@
                 <form action="/" method="POST" class="search-container" onsubmit="showLoading()">
                     <input type="text" name="url" class="form-control search-input" id="urlInput"
                            placeholder="Paste Reddit URL here (e.g., https://reddit.com/r/...)"
-                           value="{{ if not .Images }}{{ .URL }}{{ end }}" required autocomplete="off" autofocus>
+                           value="{{ if not .Images }}{{ .URL }}{{ end }}" required autocomplete="off" {{ if not .Images }}autofocus{{ end }}>
                     <button type="button" class="paste-btn" id="pasteBtn" onclick="pasteFromClipboard()" title="Paste from clipboard">
                         <i class="bi bi-clipboard"></i>
                     </button>
@@ -416,10 +416,9 @@
         // ── Paste from Clipboard ─────────────────────────────────────────────
         const pasteBtn = document.getElementById('pasteBtn');
 
-        // Only show the paste button if the Clipboard API is available (requires HTTPS or localhost).
-        if (!navigator.clipboard || location.protocol !== 'https:' && location.hostname !== 'localhost') {
-            if (pasteBtn) pasteBtn.style.display = 'none';
-            // Restore the input right padding since the paste button is gone.
+        // Only show the paste button if the Clipboard API is available.
+        if (pasteBtn && !navigator.clipboard?.readText) {
+            pasteBtn.style.display = 'none';
             const urlInput = document.getElementById('urlInput');
             if (urlInput) urlInput.style.paddingRight = '3.5rem';
         }
@@ -452,6 +451,7 @@
             document.activeElement?.blur();
             document.getElementById('loadingOverlay').style.display = 'flex';
         }
+
     </script>
 </body>
 </html>
