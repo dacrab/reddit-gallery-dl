@@ -90,7 +90,8 @@ func (r *RedditClient) FetchGallery(ctx context.Context, postURL string) (*Galle
 		return nil, err
 	}
 
-	resp, err := r.makeRequest(ctx, "GET", fmt.Sprintf("%s.json", strings.TrimRight(resolvedURL, "/")))
+	apiURL := fmt.Sprintf("%s.json", strings.TrimRight(resolvedURL, "/"))
+	resp, err := r.makeRequest(ctx, "GET", apiURL)
 	if err != nil {
 		return nil, err
 	}
@@ -129,12 +130,10 @@ func (r *RedditClient) resolveURL(ctx context.Context, inputURL string) (string,
 		return "", ErrInvalidURL
 	}
 
-	resp, err := r.makeRequest(ctx, "HEAD", inputURL)
+	// Follow redirects by making a GET request (the http.Client follows them automatically).
+	resp, err := r.makeRequest(ctx, "GET", inputURL)
 	if err != nil {
-		resp, err = r.makeRequest(ctx, "GET", inputURL)
-		if err != nil {
-			return "", err
-		}
+		return "", err
 	}
 	io.Copy(io.Discard, resp.Body)
 	resp.Body.Close()
@@ -158,18 +157,24 @@ func (r *RedditClient) StreamImage(ctx context.Context, urlStr string) (io.ReadC
 	return resp.Body, detectExtension(urlStr, resp.Header.Get("Content-Type")), nil
 }
 
+// unescape cleans HTML-encoded ampersands from Reddit URLs.
+func unescape(s string) string {
+	return strings.ReplaceAll(s, "&amp;", "&")
+}
+
 func extractImages(post redditPost) []string {
 	var images []string
 
 	if post.IsGallery && post.GalleryData != nil {
 		for _, item := range post.GalleryData.Items {
 			if media, ok := post.MediaMetadata[item.MediaID]; ok {
+				// Prefer animated GIF source, fall back to static image.
 				raw := media.S.Gif
 				if raw == "" {
 					raw = media.S.U
 				}
 				if raw != "" {
-					images = append(images, strings.ReplaceAll(raw, "&amp;", "&"))
+					images = append(images, unescape(raw))
 				}
 			}
 		}
@@ -178,13 +183,13 @@ func extractImages(post redditPost) []string {
 	if len(images) == 0 && post.Preview != nil {
 		for _, img := range post.Preview.Images {
 			if img.Variants.Gif != nil {
-				images = append(images, strings.ReplaceAll(img.Variants.Gif.Source.URL, "&amp;", "&"))
+				images = append(images, unescape(img.Variants.Gif.Source.URL))
 			}
 		}
 	}
 
 	if len(images) == 0 && post.URL != "" {
-		images = append(images, strings.ReplaceAll(post.URL, "&amp;", "&"))
+		images = append(images, unescape(post.URL))
 	}
 
 	return images
@@ -192,14 +197,14 @@ func extractImages(post redditPost) []string {
 
 func detectExtension(urlStr, contentType string) string {
 	if contentType != "" {
-		exts, _ := mime.ExtensionsByType(contentType)
-		if len(exts) > 0 {
+		if exts, _ := mime.ExtensionsByType(contentType); len(exts) > 0 {
 			return exts[0]
 		}
 	}
 	if u, err := url.Parse(urlStr); err == nil {
 		ext := strings.ToLower(path.Ext(u.Path))
-		if ext == ".png" || ext == ".gif" || ext == ".jpg" || ext == ".jpeg" {
+		switch ext {
+		case ".png", ".gif", ".jpg", ".jpeg", ".webp":
 			return ext
 		}
 	}

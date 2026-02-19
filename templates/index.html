@@ -5,21 +5,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Reddit Gallery Downloader</title>
     <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
-    <!-- Bootstrap 5 CSS -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
-    <!-- Bootstrap Icons -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
-    <!-- Google Fonts -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
-    
+
     <style>
         :root {
             --bs-font-sans-serif: 'Inter', system-ui, -apple-system, sans-serif;
             --card-transition: all 0.2s cubic-bezier(0.25, 0.46, 0.45, 0.94);
-            --selected-border-color: #0d6efd;
-            --selected-bg-opacity: 0.1;
         }
-        
+
         body {
             font-family: var(--bs-font-sans-serif);
             min-height: 100vh;
@@ -28,7 +23,6 @@
             background-color: var(--bs-body-bg);
         }
 
-        /* Hero Section */
         .hero-section {
             transition: all 0.5s ease;
             padding: 4rem 1rem;
@@ -38,7 +32,6 @@
             border-bottom: 1px solid var(--bs-border-color);
         }
 
-        /* Search Input */
         .search-container {
             max-width: 700px;
             margin: 0 auto;
@@ -47,7 +40,7 @@
         .search-input {
             border-radius: 50px;
             padding: 1rem 1.5rem;
-            padding-right: 3.5rem; /* space for button */
+            padding-right: 3.5rem;
             border: 2px solid var(--bs-border-color);
             transition: var(--card-transition);
             font-size: 1.1rem;
@@ -70,36 +63,62 @@
             align-items: center;
             justify-content: center;
         }
+        .paste-btn {
+            position: absolute;
+            right: 58px;
+            top: 50%;
+            transform: translateY(-50%);
+            border-radius: 50%;
+            width: 36px;
+            height: 36px;
+            border: 1px solid var(--bs-border-color);
+            background: transparent;
+            cursor: pointer;
+            display: grid;
+            place-items: center;
+            font-size: 1rem;
+            color: var(--bs-secondary-color);
+            opacity: 0.6;
+            transition: var(--card-transition);
+        }
+        .paste-btn:hover {
+            opacity: 1;
+            border-color: var(--bs-secondary-color);
+        }
+        .paste-btn.success {
+            color: var(--bs-success);
+            border-color: var(--bs-success);
+            opacity: 1;
+        }
+        .search-input {
+            padding-right: 6rem !important;
+        }
 
-        /* Image Grid */
         .gallery-grid {
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
             gap: 1.5rem;
             padding: 2rem 0;
         }
-        
+
         .image-card {
             position: relative;
             border-radius: 12px;
             overflow: hidden;
             cursor: pointer;
             transition: var(--card-transition);
-            aspect-ratio: 1; /* Square cards */
+            aspect-ratio: 1;
             background-color: var(--bs-tertiary-bg);
             border: 2px solid transparent;
         }
-        
         .image-card:hover {
             transform: translateY(-4px);
             box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
         }
-        
         .image-card.selected {
-            border-color: var(--selected-border-color);
+            border-color: #0d6efd;
             transform: scale(0.98);
         }
-        
         .image-card.selected::after {
             content: '';
             position: absolute;
@@ -107,7 +126,6 @@
             background-color: rgba(13, 110, 253, 0.2);
             pointer-events: none;
         }
-        
         .image-card img {
             width: 100%;
             height: 100%;
@@ -115,7 +133,6 @@
             transition: transform 0.3s ease;
         }
 
-        /* Checkmark Badge */
         .check-badge {
             position: absolute;
             top: 10px;
@@ -133,13 +150,11 @@
             transition: var(--card-transition);
             z-index: 10;
         }
-        
         .image-card.selected .check-badge {
             opacity: 1;
             transform: scale(1);
         }
 
-        /* Hover Actions */
         .card-actions {
             position: absolute;
             bottom: 0;
@@ -153,12 +168,10 @@
             justify-content: flex-end;
             gap: 0.5rem;
         }
-        
         .image-card:hover .card-actions {
             opacity: 1;
         }
 
-        /* Floating Action Bar */
         .action-bar {
             position: fixed;
             bottom: 2rem;
@@ -176,7 +189,6 @@
             z-index: 1000;
             max-width: 95vw;
         }
-
         @media (min-width: 576px) {
             .action-bar {
                 padding: 0.75rem 1.5rem;
@@ -184,12 +196,10 @@
                 max-width: 90vw;
             }
         }
-        
         .action-bar.visible {
             transform: translateX(-50%) translateY(0);
         }
 
-        /* Loading Spinner Overlay */
         #loadingOverlay {
             position: fixed;
             inset: 0;
@@ -201,7 +211,6 @@
             justify-content: center;
         }
 
-        /* Utilities */
         .btn-icon {
             width: 36px;
             height: 36px;
@@ -211,7 +220,7 @@
             justify-content: center;
             border-radius: 50%;
         }
-        
+
         .text-balance {
             text-wrap: balance;
         }
@@ -219,14 +228,12 @@
 </head>
 <body>
 
-    <!-- Loading Overlay -->
     <div id="loadingOverlay">
         <div class="spinner-border text-primary" role="status" style="width: 3rem; height: 3rem;">
             <span class="visually-hidden">Loading...</span>
         </div>
     </div>
 
-    <!-- Navigation -->
     <nav class="navbar navbar-expand px-3 py-3">
         <div class="container-fluid">
             <a class="navbar-brand fw-bold d-flex align-items-center gap-2" href="/">
@@ -241,21 +248,22 @@
         </div>
     </nav>
 
-    <!-- Main Content -->
     <main class="flex-grow-1">
-        
-        <!-- Hero / Search Section -->
+
         <section class="hero-section {{ if .Images }}compact{{ end }}">
             <div class="container text-center">
                 {{ if not .Images }}
                 <h1 class="display-4 fw-bold mb-3 text-balance">Download Reddit Galleries in Seconds</h1>
                 <p class="text-secondary mb-5 fs-5">Paste a Reddit link below to view and download high-quality images.</p>
                 {{ end }}
-                
+
                 <form action="/" method="POST" class="search-container" onsubmit="showLoading()">
-                    <input type="text" name="url" class="form-control search-input" 
-                           placeholder="Paste Reddit URL here (e.g., https://reddit.com/r/...)" 
-                           value="{{ .URL }}" required autocomplete="off" autofocus>
+                    <input type="text" name="url" class="form-control search-input" id="urlInput"
+                           placeholder="Paste Reddit URL here (e.g., https://reddit.com/r/...)"
+                           value="{{ if not .Images }}{{ .URL }}{{ end }}" required autocomplete="off" autofocus>
+                    <button type="button" class="paste-btn" id="pasteBtn" onclick="pasteFromClipboard()" title="Paste from clipboard">
+                        <i class="bi bi-clipboard"></i>
+                    </button>
                     <button type="submit" class="btn btn-primary search-btn">
                         <i class="bi bi-arrow-right fs-5"></i>
                     </button>
@@ -263,44 +271,36 @@
             </div>
         </section>
 
-        <!-- Alerts -->
         {{ if .Alert }}
         <div class="container mt-4">
             <div class="alert alert-{{ .Alert.Type }} border-0 shadow-sm d-flex align-items-center gap-3 rounded-4" role="alert">
-                <i class="bi {{ if eq .Alert.Type "success" }}bi-check-circle-fill text-success{{ else }}bi-exclamation-circle-fill text-danger{{ end }} fs-4"></i>
-                <div>
-                    {{ .Alert.Message }}
-                </div>
+                <i class="bi {{ if eq .Alert.Type "success" }}bi-check-circle-fill text-success
+                              {{- else if eq .Alert.Type "info" }}bi-info-circle-fill text-info
+                              {{- else }}bi-exclamation-circle-fill text-warning{{ end }} fs-4"></i>
+                <div>{{ .Alert.Message }}</div>
             </div>
         </div>
         {{ end }}
 
-        <!-- Gallery Grid -->
         {{ if .Images }}
         <form action="/download-zip" method="POST" id="galleryForm">
             <input type="hidden" name="page_title" value="{{ .Title }}">
-            
+
             <div class="container">
                 <div class="d-flex align-items-center justify-content-between mt-4 mb-2">
                     <h5 class="text-secondary fw-normal mb-0"><span id="countDisplay">{{ len .Images }}</span> images found</h5>
                     <div class="d-flex gap-2">
-                         <button type="button" class="btn btn-sm btn-outline-secondary rounded-pill px-3" onclick="selectAll()">Select All</button>
-                         <button type="button" class="btn btn-sm btn-outline-secondary rounded-pill px-3" onclick="deselectAll()">None</button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary rounded-pill px-3" onclick="selectAll()">Select All</button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary rounded-pill px-3" onclick="deselectAll()">None</button>
                     </div>
                 </div>
 
                 <div class="gallery-grid">
                     {{ range $i, $url := .Images }}
                     <div class="image-card selected" onclick="toggleSelection(this)">
-                        <div class="check-badge">
-                            <i class="bi bi-check-lg"></i>
-                        </div>
-                        
-                        <!-- Hidden Checkbox for Form Submission -->
+                        <div class="check-badge"><i class="bi bi-check-lg"></i></div>
                         <input type="checkbox" name="image_urls" value="{{ $url }}" checked class="d-none">
-                        
                         <img src="{{ $url }}" alt="Gallery Image {{ $i }}" loading="lazy">
-                        
                         <div class="card-actions" onclick="event.stopPropagation()">
                             <a href="{{ $url }}" target="_blank" class="btn btn-light btn-icon rounded-circle shadow-sm" title="View Full Size">
                                 <i class="bi bi-arrows-fullscreen"></i>
@@ -311,13 +311,12 @@
                 </div>
             </div>
 
-            <!-- Floating Action Bar -->
             <div class="action-bar visible" id="actionBar">
                 <div class="d-flex align-items-center gap-2 gap-sm-3 border-end pe-2 pe-sm-3 me-1">
                     <span class="fw-bold" id="selectedCount">{{ len .Images }}</span>
                     <span class="text-secondary small d-none d-sm-inline">selected</span>
                 </div>
-                
+
                 <div class="input-group input-group-sm flex-nowrap align-items-center">
                     <span class="input-group-text bg-transparent border-0 text-secondary ps-0 pe-2 d-none d-sm-block">Format:</span>
                     <select name="format" class="form-select border rounded-pill bg-body-tertiary py-1 ps-3 pe-5" style="width: auto; cursor: pointer; min-width: auto;" id="formatSelect">
@@ -334,8 +333,7 @@
             </div>
         </form>
         {{ end }}
-        
-        <!-- Empty State / Footer -->
+
         {{ if not .Images }}
         <div class="text-center text-secondary opacity-50 mt-5 pt-5">
             <i class="bi bi-images display-1"></i>
@@ -345,114 +343,115 @@
     </main>
 
     <footer class="text-center py-4 text-secondary small">
-        <p class="mb-0">Designed for simplicity {{ if .Title }}&bull; {{ .Title }}{{ end }}</p>
+        <p class="mb-0">
+            Designed for simplicity {{ if .Title }}&bull; {{ .Title }}{{ end }}
+            &nbsp;&bull;&nbsp;
+            <a href="https://github.com/dacrab/reddit-gallery-dl" target="_blank" rel="noopener noreferrer"
+               class="text-secondary text-decoration-none" title="View on GitHub">
+                <i class="bi bi-github fs-6 align-middle"></i>
+            </a>
+        </p>
     </footer>
 
-    <!-- JS -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
     <script>
-        // Theme Management
+        // ── Theme ────────────────────────────────────────────────────────────
+        function applyTheme(theme) {
+            document.documentElement.setAttribute('data-bs-theme', theme);
+            document.getElementById('themeBtn').querySelector('i').className =
+                theme === 'dark' ? 'bi bi-moon-stars-fill' : 'bi bi-sun-fill';
+        }
+
         function toggleTheme() {
-            const html = document.documentElement;
-            const current = html.getAttribute('data-bs-theme');
-            const next = current === 'dark' ? 'light' : 'dark';
-            html.setAttribute('data-bs-theme', next);
+            const next = document.documentElement.getAttribute('data-bs-theme') === 'dark' ? 'light' : 'dark';
             localStorage.setItem('theme', next);
-            updateThemeIcon(next);
+            applyTheme(next);
         }
 
-        function updateThemeIcon(theme) {
-            const btn = document.getElementById('themeBtn');
-            const icon = btn.querySelector('i');
-            if (theme === 'dark') {
-                icon.className = 'bi bi-moon-stars-fill';
-            } else {
-                icon.className = 'bi bi-sun-fill';
-            }
+        applyTheme(localStorage.getItem('theme') || 'dark');
+
+        // ── Gallery Selection ────────────────────────────────────────────────
+        const actionBar   = document.getElementById('actionBar');
+        const countSpan   = document.getElementById('selectedCount');
+        const downloadBtn = document.getElementById('downloadBtn');
+
+        function setCardSelected(card, selected) {
+            card.querySelector('input[type="checkbox"]').checked = selected;
+            card.classList.toggle('selected', selected);
         }
 
-        // Initialize Theme
-        const savedTheme = localStorage.getItem('theme') || 'dark';
-        document.documentElement.setAttribute('data-bs-theme', savedTheme);
-        updateThemeIcon(savedTheme);
-
-        // Selection Logic
         function toggleSelection(card) {
-            const checkbox = card.querySelector('input[type="checkbox"]');
-            checkbox.checked = !checkbox.checked;
-            
-            if (checkbox.checked) {
-                card.classList.add('selected');
-            } else {
-                card.classList.remove('selected');
-            }
+            const cb = card.querySelector('input[type="checkbox"]');
+            setCardSelected(card, !cb.checked);
             updateActionBar();
         }
 
         function selectAll() {
-            document.querySelectorAll('.image-card').forEach(card => {
-                const checkbox = card.querySelector('input[type="checkbox"]');
-                if (!checkbox.checked) {
-                    checkbox.checked = true;
-                    card.classList.add('selected');
-                }
-            });
+            document.querySelectorAll('.image-card').forEach(c => setCardSelected(c, true));
             updateActionBar();
         }
 
         function deselectAll() {
-            document.querySelectorAll('.image-card').forEach(card => {
-                const checkbox = card.querySelector('input[type="checkbox"]');
-                if (checkbox.checked) {
-                    checkbox.checked = false;
-                    card.classList.remove('selected');
-                }
-            });
+            document.querySelectorAll('.image-card').forEach(c => setCardSelected(c, false));
             updateActionBar();
         }
 
         function updateActionBar() {
-            const total = document.querySelectorAll('input[name="image_urls"]').length;
             const selected = document.querySelectorAll('input[name="image_urls"]:checked').length;
-            const bar = document.getElementById('actionBar');
-            const countSpan = document.getElementById('selectedCount');
-            const submitBtn = bar.querySelector('button[type="submit"]');
-
-            if (selected > 0) {
-                bar.classList.add('visible');
-                countSpan.textContent = selected;
-                submitBtn.disabled = false;
-            } else {
-                bar.classList.remove('visible');
-                submitBtn.disabled = true; // Prevent submission with 0 items
-            }
+            countSpan.textContent = selected;
+            downloadBtn.disabled = selected === 0;
+            actionBar.classList.toggle('visible', selected > 0);
         }
 
-        // Format Selection Logic
+        // ── Format Label ─────────────────────────────────────────────────────
         const formatSelect = document.getElementById('formatSelect');
         if (formatSelect) {
-            formatSelect.addEventListener('change', function() {
-                const format = this.value;
-                const btnText = document.getElementById('downloadText');
-                if (format === 'original') {
-                    btnText.textContent = 'Download';
-                } else {
-                    btnText.textContent = `Download ${format.toUpperCase()}`;
-                }
+            formatSelect.addEventListener('change', function () {
+                const fmt = this.value;
+                document.getElementById('downloadText').textContent =
+                    fmt === 'original' ? 'Download' : `Download ${fmt.toUpperCase()}`;
             });
         }
 
-        function showLoading() {
-            document.getElementById('loadingOverlay').style.display = 'flex';
+        // ── Paste from Clipboard ─────────────────────────────────────────────
+        const pasteBtn = document.getElementById('pasteBtn');
+
+        // Only show the paste button if the Clipboard API is available (requires HTTPS or localhost).
+        if (!navigator.clipboard || location.protocol !== 'https:' && location.hostname !== 'localhost') {
+            if (pasteBtn) pasteBtn.style.display = 'none';
+            // Restore the input right padding since the paste button is gone.
+            const urlInput = document.getElementById('urlInput');
+            if (urlInput) urlInput.style.paddingRight = '3.5rem';
         }
 
-        // Auto-focus input on load if empty
-        window.addEventListener('load', () => {
-            const input = document.querySelector('.search-input');
-            if (input && !input.value) {
+        async function pasteFromClipboard() {
+            const input = document.getElementById('urlInput');
+            const btn   = document.getElementById('pasteBtn');
+            const icon  = btn.querySelector('i');
+
+            try {
+                const text = await navigator.clipboard.readText();
+                input.value = text.trim();
                 input.focus();
+                // Brief visual confirmation
+                icon.className = 'bi bi-clipboard-check';
+                btn.classList.add('success');
+                setTimeout(() => {
+                    icon.className = 'bi bi-clipboard';
+                    btn.classList.remove('success');
+                }, 1500);
+            } catch {
+                // Permission denied — focus input so the user can paste manually.
+                input.focus();
+                input.select();
             }
-        });
+        }
+
+        // ── Loading Overlay ──────────────────────────────────────────────────
+        function showLoading() {
+            document.activeElement?.blur();
+            document.getElementById('loadingOverlay').style.display = 'flex';
+        }
     </script>
 </body>
 </html>

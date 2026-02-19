@@ -65,11 +65,12 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	gallery, err := s.reddit.FetchGallery(r.Context(), urlStr)
 	if err != nil {
 		alert := &Alert{Message: err.Error(), Type: "danger"}
-		if errors.Is(err, ErrInvalidURL) {
+		switch {
+		case errors.Is(err, ErrInvalidURL):
 			alert = &Alert{Message: "That doesn't look like a valid Reddit link.", Type: "warning"}
-		} else if errors.Is(err, ErrPostNotFound) {
+		case errors.Is(err, ErrPostNotFound):
 			alert = &Alert{Message: "Post not found. It might be deleted or private.", Type: "warning"}
-		} else if errors.Is(err, ErrNoImages) {
+		case errors.Is(err, ErrNoImages):
 			alert = &Alert{Message: "This post exists but has no images.", Type: "info"}
 		}
 		s.tmpl.ExecuteTemplate(w, "index.html", TemplateData{URL: urlStr, Alert: alert})
@@ -86,45 +87,11 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDownloadSingle(w http.ResponseWriter, r *http.Request) {
 	rawURL := r.URL.Query().Get("url")
-	format := r.URL.Query().Get("format")
 	if rawURL == "" {
 		http.Error(w, "Missing URL", http.StatusBadRequest)
 		return
 	}
-
-	s.serveSingleImage(w, r.Context(), rawURL, format)
-}
-
-func (s *Server) serveSingleImage(w http.ResponseWriter, ctx context.Context, rawURL, format string) {
-	body, ext, err := s.reddit.StreamImage(ctx, rawURL)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadGateway)
-		return
-	}
-	defer body.Close()
-
-	finalExt := ext
-	if format != "" && format != "original" {
-		finalExt = "." + format
-		if format == "jpeg" {
-			finalExt = ".jpg"
-		}
-	}
-
-	filename := "image" + finalExt
-	if u, _ := url.Parse(rawURL); u != nil {
-		base := path.Base(u.Path)
-		if strings.Contains(base, ".") {
-			filename = strings.TrimSuffix(base, path.Ext(base)) + finalExt
-		}
-	}
-
-	w.Header().Set("Content-Disposition", "attachment; filename=\""+filename+"\"")
-	w.Header().Set("Content-Type", mime.TypeByExtension(finalExt))
-
-	if err := s.streamImage(body, format, w); err != nil {
-		log.Printf("Error streaming single image: %v", err)
-	}
+	s.serveSingleImage(w, r.Context(), rawURL, r.URL.Query().Get("format"))
 }
 
 func (s *Server) handleDownloadZip(w http.ResponseWriter, r *http.Request) {
@@ -165,30 +132,59 @@ func (s *Server) handleDownloadZip(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		finalExt := ext
-		if format != "" && format != "original" {
-			finalExt = "." + format
-			if format == "jpeg" {
-				finalExt = ".jpg"
-			}
-		}
-
-		f, err := z.Create(fmt.Sprintf("image_%03d%s", i+1, finalExt))
+		f, err := z.Create(fmt.Sprintf("image_%03d%s", i+1, resolvedExt(ext, format)))
 		if err != nil {
 			body.Close()
 			log.Printf("Zip create error: %v", err)
 			continue
 		}
 
-		if err := s.streamImage(body, format, f); err != nil {
+		if err := streamImage(body, format, f); err != nil {
 			log.Printf("Zip write error for %s: %v", u, err)
 		}
 		body.Close()
 	}
 }
 
-// streamImage streams the image from src to dst, converting it on-the-fly if needed.
-func (s *Server) streamImage(src io.Reader, format string, dst io.Writer) error {
+func (s *Server) serveSingleImage(w http.ResponseWriter, ctx context.Context, rawURL, format string) {
+	body, ext, err := s.reddit.StreamImage(ctx, rawURL)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer body.Close()
+
+	finalExt := resolvedExt(ext, format)
+
+	filename := "image" + finalExt
+	if u, _ := url.Parse(rawURL); u != nil {
+		if base := path.Base(u.Path); strings.Contains(base, ".") {
+			filename = strings.TrimSuffix(base, path.Ext(base)) + finalExt
+		}
+	}
+
+	w.Header().Set("Content-Disposition", "attachment; filename=\""+filename+"\"")
+	w.Header().Set("Content-Type", mime.TypeByExtension(finalExt))
+
+	if err := streamImage(body, format, w); err != nil {
+		log.Printf("Error streaming single image: %v", err)
+	}
+}
+
+// resolvedExt returns the file extension to use based on the requested format.
+// Falls back to the original extension when format is empty or "original".
+func resolvedExt(originalExt, format string) string {
+	if format == "" || format == "original" {
+		return originalExt
+	}
+	if format == "jpeg" {
+		return ".jpg"
+	}
+	return "." + format
+}
+
+// streamImage copies src to dst, converting the image format on-the-fly if needed.
+func streamImage(src io.Reader, format string, dst io.Writer) error {
 	if format == "" || format == "original" {
 		_, err := io.Copy(dst, src)
 		return err
@@ -215,12 +211,13 @@ func cleanFilename(s string) string {
 		return "reddit_gallery"
 	}
 	return strings.Map(func(r rune) rune {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+		switch {
+		case unicode.IsLetter(r) || unicode.IsDigit(r):
 			return r
-		}
-		if unicode.IsSpace(r) {
+		case unicode.IsSpace(r):
 			return '_'
+		default:
+			return -1
 		}
-		return -1
 	}, s)
 }
