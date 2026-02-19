@@ -163,7 +163,7 @@ func (s *Server) serveSingleImage(w http.ResponseWriter, ctx context.Context, ra
 		}
 	}
 
-	w.Header().Set("Content-Disposition", "attachment; filename=\""+filename+"\"")
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": filename}))
 	w.Header().Set("Content-Type", mime.TypeByExtension(finalExt))
 
 	if err := streamImage(body, format, w); err != nil {

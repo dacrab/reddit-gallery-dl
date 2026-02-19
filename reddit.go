@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"mime"
 	"net/http"
@@ -130,12 +131,11 @@ func (r *RedditClient) resolveURL(ctx context.Context, inputURL string) (string,
 		return "", ErrInvalidURL
 	}
 
-	// Follow redirects by making a GET request (the http.Client follows them automatically).
-	resp, err := r.makeRequest(ctx, "GET", inputURL)
+	// Use HEAD to follow redirects without downloading the body.
+	resp, err := r.makeRequest(ctx, http.MethodHead, inputURL)
 	if err != nil {
 		return "", err
 	}
-	io.Copy(io.Discard, resp.Body)
 	resp.Body.Close()
 
 	final := resp.Request.URL
@@ -157,10 +157,6 @@ func (r *RedditClient) StreamImage(ctx context.Context, urlStr string) (io.ReadC
 	return resp.Body, detectExtension(urlStr, resp.Header.Get("Content-Type")), nil
 }
 
-// unescape cleans HTML-encoded ampersands from Reddit URLs.
-func unescape(s string) string {
-	return strings.ReplaceAll(s, "&amp;", "&")
-}
 
 func extractImages(post redditPost) []string {
 	var images []string
@@ -174,7 +170,7 @@ func extractImages(post redditPost) []string {
 					raw = media.S.U
 				}
 				if raw != "" {
-					images = append(images, unescape(raw))
+					images = append(images, html.UnescapeString(raw))
 				}
 			}
 		}
@@ -183,29 +179,31 @@ func extractImages(post redditPost) []string {
 	if len(images) == 0 && post.Preview != nil {
 		for _, img := range post.Preview.Images {
 			if img.Variants.Gif != nil {
-				images = append(images, unescape(img.Variants.Gif.Source.URL))
+				images = append(images, html.UnescapeString(img.Variants.Gif.Source.URL))
 			}
 		}
 	}
 
 	if len(images) == 0 && post.URL != "" {
-		images = append(images, unescape(post.URL))
+		images = append(images, html.UnescapeString(post.URL))
 	}
 
 	return images
 }
 
 func detectExtension(urlStr, contentType string) string {
-	if contentType != "" {
-		if exts, _ := mime.ExtensionsByType(contentType); len(exts) > 0 {
-			return exts[0]
-		}
-	}
+	// Check the URL path first — mime.ExtensionsByType sorts alphabetically
+	// and returns unreliable results (e.g. .jfif instead of .jpg for image/jpeg).
 	if u, err := url.Parse(urlStr); err == nil {
 		ext := strings.ToLower(path.Ext(u.Path))
 		switch ext {
 		case ".png", ".gif", ".jpg", ".jpeg", ".webp":
 			return ext
+		}
+	}
+	if contentType != "" {
+		if exts, _ := mime.ExtensionsByType(contentType); len(exts) > 0 {
+			return exts[0]
 		}
 	}
 	return ".jpg"
