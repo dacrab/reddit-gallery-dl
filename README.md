@@ -28,7 +28,7 @@ Visit **http://localhost:5000**.
 
 ### 💻 Local Development
 
-Requires **Go 1.24+**.
+Requires **Go 1.25+**.
 
 ```bash
 # Clone the repository

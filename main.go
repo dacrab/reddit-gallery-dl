@@ -2,7 +2,7 @@ package main
 
 import (
 	"html/template"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 )
@@ -10,7 +10,8 @@ import (
 func main() {
 	tmpl, err := template.ParseGlob("templates/*.html")
 	if err != nil {
-		log.Fatalf("Failed to parse templates: %v", err)
+		slog.Error("Failed to parse templates", "error", err)
+		os.Exit(1)
 	}
 
 	port := os.Getenv("PORT")
@@ -18,8 +19,9 @@ func main() {
 		port = "5000"
 	}
 
-	log.Printf("Starting Reddit Gallery DL on port %s...", port)
+	slog.Info("Starting Reddit Gallery DL", "port", port)
 	if err := http.ListenAndServe(":"+port, NewServer(tmpl).Routes()); err != nil {
-		log.Fatal(err)
+		slog.Error("Server failed", "error", err)
+		os.Exit(1)
 	}
 }

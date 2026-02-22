@@ -6,20 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
-	"image"
-	"image/gif"
-	"image/jpeg"
-	"image/png"
-	"io"
-	"log"
+	"log/slog"
 	"mime"
 	"net/http"
 	"net/url"
 	"path"
 	"strings"
 	"unicode"
-
-	_ "golang.org/x/image/webp"
 )
 
 type Server struct {
@@ -43,6 +36,13 @@ func (s *Server) Routes() *http.ServeMux {
 	return mux
 }
 
+// render executes the named template, logging any error instead of silently dropping it.
+func (s *Server) render(w http.ResponseWriter, data TemplateData) {
+	if err := s.tmpl.ExecuteTemplate(w, "index.html", data); err != nil {
+		slog.Error("Template render failed", "error", err)
+	}
+}
+
 type Alert struct {
 	Message string
 	Type    string
@@ -57,7 +57,7 @@ type TemplateData struct {
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		s.tmpl.ExecuteTemplate(w, "index.html", TemplateData{})
+		s.render(w, TemplateData{})
 		return
 	}
 
@@ -73,11 +73,11 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, ErrNoImages):
 			alert = &Alert{Message: "This post exists but has no images.", Type: "info"}
 		}
-		s.tmpl.ExecuteTemplate(w, "index.html", TemplateData{URL: urlStr, Alert: alert})
+		s.render(w, TemplateData{URL: urlStr, Alert: alert})
 		return
 	}
 
-	s.tmpl.ExecuteTemplate(w, "index.html", TemplateData{
+	s.render(w, TemplateData{
 		Title:  gallery.Title,
 		Images: gallery.Images,
 		URL:    urlStr,
@@ -100,7 +100,10 @@ func (s *Server) handleDownloadZip(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	r.ParseForm()
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Invalid form data", http.StatusBadRequest)
+		return
+	}
 	urls := r.Form["image_urls"]
 	format := r.FormValue("format")
 	if len(urls) == 0 {
@@ -122,25 +125,25 @@ func (s *Server) handleDownloadZip(w http.ResponseWriter, r *http.Request) {
 
 	for i, u := range urls {
 		if r.Context().Err() != nil {
-			log.Println("Client disconnected, stopping zip stream.")
+			slog.Info("Client disconnected, stopping zip stream")
 			return
 		}
 
 		body, ext, err := s.reddit.StreamImage(r.Context(), u)
 		if err != nil {
-			log.Printf("Skipping %s: %v", u, err)
+			slog.Warn("Skipping image", "url", u, "error", err)
 			continue
 		}
 
 		f, err := z.Create(fmt.Sprintf("image_%03d%s", i+1, resolvedExt(ext, format)))
 		if err != nil {
 			body.Close()
-			log.Printf("Zip create error: %v", err)
+			slog.Error("Zip create error", "error", err)
 			continue
 		}
 
 		if err := streamImage(body, format, f); err != nil {
-			log.Printf("Zip write error for %s: %v", u, err)
+			slog.Error("Zip write error", "url", u, "error", err)
 		}
 		body.Close()
 	}
@@ -167,43 +170,8 @@ func (s *Server) serveSingleImage(w http.ResponseWriter, ctx context.Context, ra
 	w.Header().Set("Content-Type", mime.TypeByExtension(finalExt))
 
 	if err := streamImage(body, format, w); err != nil {
-		log.Printf("Error streaming single image: %v", err)
+		slog.Error("Error streaming single image", "error", err)
 	}
-}
-
-// resolvedExt returns the file extension to use based on the requested format.
-// Falls back to the original extension when format is empty or "original".
-func resolvedExt(originalExt, format string) string {
-	if format == "" || format == "original" {
-		return originalExt
-	}
-	if format == "jpeg" {
-		return ".jpg"
-	}
-	return "." + format
-}
-
-// streamImage copies src to dst, converting the image format on-the-fly if needed.
-func streamImage(src io.Reader, format string, dst io.Writer) error {
-	if format == "" || format == "original" {
-		_, err := io.Copy(dst, src)
-		return err
-	}
-
-	img, _, err := image.Decode(src)
-	if err != nil {
-		return fmt.Errorf("decode: %w", err)
-	}
-
-	switch format {
-	case "jpg", "jpeg":
-		return jpeg.Encode(dst, img, &jpeg.Options{Quality: 90})
-	case "png":
-		return png.Encode(dst, img)
-	case "gif":
-		return gif.Encode(dst, img, nil)
-	}
-	return fmt.Errorf("unsupported format: %s", format)
 }
 
 func cleanFilename(s string) string {

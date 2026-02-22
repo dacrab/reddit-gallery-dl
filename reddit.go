@@ -7,10 +7,8 @@ import (
 	"fmt"
 	"html"
 	"io"
-	"mime"
 	"net/http"
 	"net/url"
-	"path"
 	"strings"
 	"time"
 )
@@ -92,7 +90,7 @@ func (r *RedditClient) FetchGallery(ctx context.Context, postURL string) (*Galle
 	}
 
 	apiURL := fmt.Sprintf("%s.json", strings.TrimRight(resolvedURL, "/"))
-	resp, err := r.makeRequest(ctx, "GET", apiURL)
+	resp, err := r.makeRequest(ctx, http.MethodGet, apiURL)
 	if err != nil {
 		return nil, err
 	}
@@ -146,7 +144,7 @@ func (r *RedditClient) resolveURL(ctx context.Context, inputURL string) (string,
 }
 
 func (r *RedditClient) StreamImage(ctx context.Context, urlStr string) (io.ReadCloser, string, error) {
-	resp, err := r.makeRequest(ctx, "GET", urlStr)
+	resp, err := r.makeRequest(ctx, http.MethodGet, urlStr)
 	if err != nil {
 		return nil, "", err
 	}
@@ -156,7 +154,6 @@ func (r *RedditClient) StreamImage(ctx context.Context, urlStr string) (io.ReadC
 	}
 	return resp.Body, detectExtension(urlStr, resp.Header.Get("Content-Type")), nil
 }
-
 
 func extractImages(post redditPost) []string {
 	var images []string
@@ -191,20 +188,3 @@ func extractImages(post redditPost) []string {
 	return images
 }
 
-func detectExtension(urlStr, contentType string) string {
-	// Check the URL path first — mime.ExtensionsByType sorts alphabetically
-	// and returns unreliable results (e.g. .jfif instead of .jpg for image/jpeg).
-	if u, err := url.Parse(urlStr); err == nil {
-		ext := strings.ToLower(path.Ext(u.Path))
-		switch ext {
-		case ".png", ".gif", ".jpg", ".jpeg", ".webp":
-			return ext
-		}
-	}
-	if contentType != "" {
-		if exts, _ := mime.ExtensionsByType(contentType); len(exts) > 0 {
-			return exts[0]
-		}
-	}
-	return ".jpg"
-}
