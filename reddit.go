@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,7 +15,8 @@ import (
 )
 
 const (
-	userAgent      = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+	// userAgent follows Reddit's recommended format: <platform>:<app>:<version>.
+	userAgent      = "golang:reddit-gallery-dl:v1.0.0 (by /u/reddit-gallery-dl)"
 	defaultTimeout = 120 * time.Second
 )
 
@@ -24,13 +26,36 @@ var (
 	ErrNoImages     = errors.New("no images found in post")
 )
 
+// newTransport returns an HTTP/1.1 transport. Reddit's CDN applies stricter
+// rate limiting to HTTP/2 connections from non-browser clients.
+func newTransport() *http.Transport {
+	return &http.Transport{
+		TLSClientConfig:   &tls.Config{MinVersion: tls.VersionTLS12},
+		ForceAttemptHTTP2: false,
+	}
+}
+
 type RedditClient struct {
-	client *http.Client
+	client           *http.Client
+	noRedirectClient *http.Client
 }
 
 func NewRedditClient() *RedditClient {
 	return &RedditClient{
-		client: &http.Client{Timeout: defaultTimeout},
+		client: &http.Client{
+			Timeout:   defaultTimeout,
+			Transport: newTransport(),
+		},
+		// noRedirectClient is used for resolving share links (/s/...).
+		// By not following redirects we avoid hitting the destination page,
+		// which can return 429 for restricted subreddits without a session.
+		noRedirectClient: &http.Client{
+			Timeout:   defaultTimeout,
+			Transport: newTransport(),
+			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		},
 	}
 }
 
@@ -73,16 +98,19 @@ type redditPost struct {
 	} `json:"preview"`
 }
 
-func (r *RedditClient) makeRequest(ctx context.Context, method, targetURL string) (*http.Response, error) {
+// newRequest builds an authenticated-style request with the standard headers
+// Reddit expects from API clients.
+func newRequest(ctx context.Context, method, targetURL string) (*http.Request, error) {
 	req, err := http.NewRequestWithContext(ctx, method, targetURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("request creation failed: %w", err)
 	}
 	req.Header.Set("User-Agent", userAgent)
 	req.AddCookie(&http.Cookie{Name: "over18", Value: "1"})
-	return r.client.Do(req)
+	return req, nil
 }
 
+// FetchGallery resolves a Reddit post URL and returns its gallery images.
 func (r *RedditClient) FetchGallery(ctx context.Context, postURL string) (*Gallery, error) {
 	resolvedURL, err := r.resolveURL(ctx, postURL)
 	if err != nil {
@@ -90,7 +118,12 @@ func (r *RedditClient) FetchGallery(ctx context.Context, postURL string) (*Galle
 	}
 
 	apiURL := fmt.Sprintf("%s.json", strings.TrimRight(resolvedURL, "/"))
-	resp, err := r.makeRequest(ctx, http.MethodGet, apiURL)
+	req, err := newRequest(ctx, http.MethodGet, apiURL)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := r.client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -118,6 +151,9 @@ func (r *RedditClient) FetchGallery(ctx context.Context, postURL string) (*Galle
 	return &Gallery{Title: post.Title, Images: images, URL: postURL}, nil
 }
 
+// resolveURL validates and normalises a Reddit post URL.
+// Share links (/s/...) are resolved by inspecting the redirect Location header
+// without following it, to avoid rate limiting on restricted subreddits.
 func (r *RedditClient) resolveURL(ctx context.Context, inputURL string) (string, error) {
 	inputURL = strings.TrimSpace(inputURL)
 	if !strings.HasPrefix(inputURL, "http") {
@@ -125,26 +161,63 @@ func (r *RedditClient) resolveURL(ctx context.Context, inputURL string) (string,
 	}
 
 	u, err := url.Parse(inputURL)
-	if err != nil || u.Host == "" || !strings.Contains(u.Host, ".") {
+	if err != nil || u.Host == "" || !strings.Contains(u.Host, "reddit.com") {
 		return "", ErrInvalidURL
 	}
 
-	// Use HEAD to follow redirects without downloading the body.
-	resp, err := r.makeRequest(ctx, http.MethodHead, inputURL)
+	// Share links use the path format /r/<sub>/s/<id> and redirect to the real post.
+	if isShareLink(u.Path) {
+		u, err = r.resolveShareLink(ctx, inputURL)
+		if err != nil {
+			return "", err
+		}
+	}
+
+	// Normalise to https://www.reddit.com/<path>, stripping query params and fragments.
+	return fmt.Sprintf("https://www.reddit.com%s", u.Path), nil
+}
+
+// isShareLink reports whether path is a Reddit share link (/r/<sub>/s/<id>).
+func isShareLink(path string) bool {
+	// e.g. /r/GreekCelebs/s/x1K7r5KnaM → parts: [r, GreekCelebs, s, x1K7r5KnaM]
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	return len(parts) == 4 && parts[0] == "r" && parts[2] == "s" && parts[3] != ""
+}
+
+// resolveShareLink fetches the share link without following the redirect and
+// returns the parsed URL from the Location header.
+func (r *RedditClient) resolveShareLink(ctx context.Context, shareURL string) (*url.URL, error) {
+	req, err := newRequest(ctx, http.MethodGet, shareURL)
 	if err != nil {
-		return "", err
+		return nil, err
+	}
+
+	resp, err := r.noRedirectClient.Do(req)
+	if err != nil {
+		return nil, err
 	}
 	resp.Body.Close()
 
-	final := resp.Request.URL
-	if !strings.Contains(final.Host, "reddit.com") {
-		return "", ErrInvalidURL
+	loc := resp.Header.Get("Location")
+	if loc == "" {
+		return nil, ErrInvalidURL
 	}
-	return fmt.Sprintf("%s://%s%s", final.Scheme, final.Host, final.Path), nil
+
+	u, err := url.Parse(loc)
+	if err != nil || !strings.Contains(u.Host, "reddit.com") {
+		return nil, ErrInvalidURL
+	}
+	return u, nil
 }
 
+// StreamImage fetches an image URL and returns its body and detected extension.
 func (r *RedditClient) StreamImage(ctx context.Context, urlStr string) (io.ReadCloser, string, error) {
-	resp, err := r.makeRequest(ctx, http.MethodGet, urlStr)
+	req, err := newRequest(ctx, http.MethodGet, urlStr)
+	if err != nil {
+		return nil, "", err
+	}
+
+	resp, err := r.client.Do(req)
 	if err != nil {
 		return nil, "", err
 	}
@@ -187,4 +260,3 @@ func extractImages(post redditPost) []string {
 
 	return images
 }
-

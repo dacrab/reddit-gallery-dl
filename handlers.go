@@ -118,7 +118,7 @@ func (s *Server) handleDownloadZip(w http.ResponseWriter, r *http.Request) {
 
 	title := cleanFilename(r.FormValue("page_title"))
 	w.Header().Set("Content-Type", "application/zip")
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s.zip\"", title))
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": title + ".zip"}))
 
 	z := zip.NewWriter(w)
 	defer z.Close()

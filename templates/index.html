@@ -276,7 +276,8 @@
             <div class="alert alert-{{ .Alert.Type }} border-0 shadow-sm d-flex align-items-center gap-3 rounded-4" role="alert">
                 <i class="bi {{ if eq .Alert.Type "success" }}bi-check-circle-fill text-success
                               {{- else if eq .Alert.Type "info" }}bi-info-circle-fill text-info
-                              {{- else }}bi-exclamation-circle-fill text-warning{{ end }} fs-4"></i>
+                              {{- else if eq .Alert.Type "danger" }}bi-x-circle-fill text-danger
+                              {{- else }}bi-exclamation-triangle-fill text-warning{{ end }} fs-4"></i>
                 <div>{{ .Alert.Message }}</div>
             </div>
         </div>
