@@ -3,456 +3,325 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Reddit Gallery Downloader</title>
+    <title>Reddit Gallery DL</title>
     <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
-
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.min.css" rel="stylesheet">
     <style>
         :root {
-            --bs-font-sans-serif: 'Inter', system-ui, -apple-system, sans-serif;
-            --card-transition: all 0.2s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+            --bs-primary:           #FF4500;
+            --bs-primary-rgb:       255, 69, 0;
+            --bs-link-color:        #FF4500;
+            --bs-link-color-rgb:    255, 69, 0;
+            --transition:           all 0.2s cubic-bezier(0.25, 0.46, 0.45, 0.94);
         }
 
-        body {
-            font-family: var(--bs-font-sans-serif);
-            min-height: 100vh;
-            display: flex;
-            flex-direction: column;
-            background-color: var(--bs-body-bg);
+        body { min-height: 100vh; display: flex; flex-direction: column; }
+
+        /* Navbar */
+        .btn-icon {
+            width: 36px; height: 36px; padding: 0;
+            display: inline-flex; align-items: center; justify-content: center;
+            border-radius: 50%;
         }
 
-        .hero-section {
-            transition: all 0.5s ease;
-            padding: 4rem 1rem;
-        }
-        .hero-section.compact {
-            padding: 1rem 1rem;
-            border-bottom: 1px solid var(--bs-border-color);
-        }
+        /* Hero */
+        .hero-section { padding: 4rem 1rem; transition: padding 0.4s ease; }
+        .hero-section.compact { padding: 1rem; border-bottom: 1px solid var(--bs-border-color); }
 
-        .search-container {
-            max-width: 700px;
-            margin: 0 auto;
-            position: relative;
-        }
+        /* Search */
+        .search-container { max-width: 860px; margin: 0 auto; position: relative; }
         .search-input {
             border-radius: 50px;
-            padding: 1rem 1.5rem;
-            padding-right: 3.5rem;
+            padding: 1rem 6.5rem 1rem 1.5rem;
             border: 2px solid var(--bs-border-color);
-            transition: var(--card-transition);
             font-size: 1.1rem;
-            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            transition: var(--transition);
+            box-shadow: 0 4px 6px -1px rgba(0,0,0,.1);
         }
         .search-input:focus {
-            border-color: var(--bs-primary);
-            box-shadow: 0 0 0 4px rgba(13, 110, 253, 0.15);
+            border-color: #FF4500;
+            box-shadow: 0 0 0 4px rgba(255,69,0,.15);
         }
         .search-btn {
-            position: absolute;
-            right: 8px;
-            top: 50%;
-            transform: translateY(-50%);
-            border-radius: 50%;
-            width: 42px;
-            height: 42px;
-            padding: 0;
-            display: flex;
-            align-items: center;
-            justify-content: center;
+            position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+            border-radius: 50%; width: 42px; height: 42px;
+            padding: 0; display: inline-flex; align-items: center; justify-content: center;
         }
         .paste-btn {
-            position: absolute;
-            right: 58px;
-            top: 50%;
-            transform: translateY(-50%);
-            border-radius: 50%;
-            width: 36px;
-            height: 36px;
-            border: 1px solid var(--bs-border-color);
-            background: transparent;
-            cursor: pointer;
-            display: grid;
-            place-items: center;
-            font-size: 1rem;
-            color: var(--bs-secondary-color);
-            opacity: 0.6;
-            transition: var(--card-transition);
+            position: absolute; right: 58px; top: 50%; transform: translateY(-50%);
+            border-radius: 50%; width: 36px; height: 36px;
+            border: 1px solid var(--bs-border-color); background: transparent;
+            cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+            font-size: 1rem; color: var(--bs-secondary-color);
+            opacity: .6; transition: var(--transition);
         }
-        .paste-btn:hover {
-            opacity: 1;
-            border-color: var(--bs-secondary-color);
-        }
-        .paste-btn.success {
-            color: var(--bs-success);
-            border-color: var(--bs-success);
-            opacity: 1;
-        }
-        .search-input {
-            padding-right: 6rem !important;
-        }
+        .paste-btn:hover { opacity: 1; border-color: var(--bs-secondary-color); }
+        .paste-btn.success { color: var(--bs-success); border-color: var(--bs-success); opacity: 1; }
 
+        /* Gallery */
         .gallery-grid {
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-            gap: 1.5rem;
-            padding: 2rem 0;
+            gap: 1.5rem; padding: 2rem 0;
         }
-
         .image-card {
-            position: relative;
-            border-radius: 12px;
-            overflow: hidden;
-            cursor: pointer;
-            transition: var(--card-transition);
-            aspect-ratio: 1;
-            background-color: var(--bs-tertiary-bg);
+            position: relative; border-radius: 12px; overflow: hidden;
+            cursor: pointer; aspect-ratio: 1;
+            background: var(--bs-tertiary-bg);
             border: 2px solid transparent;
+            transition: var(--transition);
         }
-        .image-card:hover {
-            transform: translateY(-4px);
-            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
-        }
-        .image-card.selected {
-            border-color: #0d6efd;
-            transform: scale(0.98);
-        }
+        .image-card:hover { transform: translateY(-4px); box-shadow: 0 10px 15px -3px rgba(0,0,0,.1); }
+        .image-card.selected { border-color: #FF4500; transform: scale(0.98); }
         .image-card.selected::after {
-            content: '';
-            position: absolute;
-            inset: 0;
-            background-color: rgba(13, 110, 253, 0.2);
-            pointer-events: none;
+            content: ''; position: absolute; inset: 0;
+            background: rgba(255,69,0,.15); pointer-events: none;
         }
-        .image-card img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-            transition: transform 0.3s ease;
-        }
+        .image-card img { width: 100%; height: 100%; object-fit: cover; }
+        .image-card input[type="checkbox"] { display: none; }
 
         .check-badge {
-            position: absolute;
-            top: 10px;
-            right: 10px;
-            width: 28px;
-            height: 28px;
-            background: var(--bs-primary);
-            color: white;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            opacity: 0;
-            transform: scale(0.8);
-            transition: var(--card-transition);
-            z-index: 10;
+            position: absolute; top: 10px; right: 10px;
+            width: 28px; height: 28px; border-radius: 50%;
+            background: #FF4500; color: white;
+            display: inline-flex; align-items: center; justify-content: center;
+            opacity: 0; transform: scale(.8); transition: var(--transition); z-index: 1;
         }
-        .image-card.selected .check-badge {
-            opacity: 1;
-            transform: scale(1);
-        }
+        .image-card.selected .check-badge { opacity: 1; transform: scale(1); }
 
         .card-actions {
-            position: absolute;
-            bottom: 0;
-            left: 0;
-            right: 0;
-            padding: 1rem;
-            background: linear-gradient(to top, rgba(0,0,0,0.8), transparent);
-            opacity: 0;
-            transition: var(--card-transition);
-            display: flex;
-            justify-content: flex-end;
-            gap: 0.5rem;
+            position: absolute; bottom: 0; left: 0; right: 0;
+            padding: 1rem; background: linear-gradient(to top, rgba(0,0,0,.8), transparent);
+            opacity: 0; transition: var(--transition);
+            display: flex; justify-content: flex-end; gap: .5rem;
         }
-        .image-card:hover .card-actions {
-            opacity: 1;
-        }
+        .image-card:hover .card-actions { opacity: 1; }
 
+        /* Action bar */
         .action-bar {
-            position: fixed;
-            bottom: 2rem;
-            left: 50%;
+            position: fixed; bottom: 2rem; left: 50%;
             transform: translateX(-50%) translateY(150%);
-            background: var(--bs-body-bg);
-            border: 1px solid var(--bs-border-color);
-            padding: 0.75rem 1rem;
-            border-radius: 100px;
-            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3);
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
+            background: var(--bs-body-bg); border: 1px solid var(--bs-border-color);
+            padding: .75rem 1rem; border-radius: 100px;
+            box-shadow: 0 10px 25px -5px rgba(0,0,0,.3);
+            display: flex; align-items: center; gap: .75rem;
             transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-            z-index: 1000;
-            max-width: 95vw;
+            z-index: 1000; max-width: 95vw;
         }
-        @media (min-width: 576px) {
-            .action-bar {
-                padding: 0.75rem 1.5rem;
-                gap: 1rem;
-                max-width: 90vw;
-            }
-        }
-        .action-bar.visible {
-            transform: translateX(-50%) translateY(0);
-        }
+        @media (min-width: 576px) { .action-bar { padding: .75rem 1.5rem; gap: 1rem; max-width: 90vw; } }
+        .action-bar.visible { transform: translateX(-50%) translateY(0); }
 
+        /* Bootstrap overrides */
+        .btn-primary {
+            --bs-btn-bg:               #FF4500;
+            --bs-btn-border-color:     #FF4500;
+            --bs-btn-hover-bg:         #CC3700;
+            --bs-btn-hover-border-color: #CC3700;
+            --bs-btn-active-bg:        #CC3700;
+            --bs-btn-focus-shadow-rgb: 255, 69, 0;
+        }
+        .btn-outline-secondary:hover, .btn-outline-secondary:focus {
+            background: rgba(255,69,0,.1); border-color: #FF4500; color: #FF4500;
+        }
+        .alert-success { --bs-alert-color: #46d160; --bs-alert-bg: rgba(70,209,96,.1); --bs-alert-border-color: rgba(70,209,96,.3); }
+
+        /* Loading overlay */
         #loadingOverlay {
-            position: fixed;
-            inset: 0;
-            background: rgba(0,0,0,0.5);
-            backdrop-filter: blur(5px);
-            z-index: 2000;
-            display: none;
-            align-items: center;
-            justify-content: center;
-        }
-
-        .btn-icon {
-            width: 36px;
-            height: 36px;
-            padding: 0;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            border-radius: 50%;
-        }
-
-        .text-balance {
-            text-wrap: balance;
+            position: fixed; inset: 0;
+            background: rgba(0,0,0,.5); backdrop-filter: blur(5px);
+            z-index: 2000; display: none; align-items: center; justify-content: center;
         }
     </style>
 </head>
 <body>
 
-    <div id="loadingOverlay">
-        <div class="spinner-border text-primary" role="status" style="width: 3rem; height: 3rem;">
-            <span class="visually-hidden">Loading...</span>
+<div id="loadingOverlay">
+    <div class="spinner-border text-primary" role="status" style="width:3rem;height:3rem;">
+        <span class="visually-hidden">Loading…</span>
+    </div>
+</div>
+
+<nav class="navbar px-3 py-2">
+    <a class="navbar-brand fw-bold d-flex align-items-center gap-2" href="/">
+        <img src="/static/favicon.svg" width="28" height="28" alt="Logo">
+        Gallery<span class="text-primary">DL</span>
+    </a>
+    <div class="ms-auto d-flex align-items-center gap-2">
+        <a href="https://github.com/dacrab/reddit-gallery-dl" target="_blank" rel="noopener"
+           class="btn btn-outline-secondary btn-icon border-0" title="GitHub" aria-label="GitHub">
+            <i class="bi bi-github"></i>
+        </a>
+        <button class="btn btn-outline-secondary btn-icon border-0" onclick="toggleTheme()"
+                id="themeBtn" title="Toggle theme" aria-label="Toggle theme">
+            <i class="bi bi-moon-stars-fill"></i>
+        </button>
+    </div>
+</nav>
+
+<main class="flex-grow-1">
+
+    <section class="hero-section {{ if .Images }}compact{{ end }}">
+        <div class="container text-center">
+            {{ if not .Images }}
+            <h1 class="display-4 fw-bold mb-3">Download Reddit Galleries in Seconds</h1>
+            <p class="text-secondary mb-5 fs-5">Paste a Reddit link below to view and download high-quality images.</p>
+            {{ end }}
+
+            <form action="/" method="POST" class="search-container" onsubmit="showLoading()">
+                <input class="form-control search-input" type="text" name="url" id="urlInput"
+                       placeholder="Paste a Reddit URL…"
+                       value="{{ if not .Images }}{{ .URL }}{{ end }}"
+                       required autocomplete="off" {{ if not .Images }}autofocus{{ end }}>
+                <button type="button" class="paste-btn" id="pasteBtn" onclick="pasteFromClipboard()" title="Paste from clipboard">
+                    <i class="bi bi-clipboard"></i>
+                </button>
+                <button type="submit" class="btn btn-primary search-btn">
+                    <i class="bi bi-arrow-right fs-5"></i>
+                </button>
+            </form>
+        </div>
+    </section>
+
+    {{ if .Alert }}
+    <div class="container mt-4">
+        <div class="alert alert-{{ .Alert.Type }} border-0 shadow-sm d-flex align-items-center gap-3 rounded-4" role="alert">
+            <i class="bi fs-4
+                {{ if eq .Alert.Type "success" }}bi-check-circle-fill text-success
+                {{- else if eq .Alert.Type "info" }}bi-info-circle-fill text-info
+                {{- else if eq .Alert.Type "danger" }}bi-x-circle-fill text-danger
+                {{- else }}bi-exclamation-triangle-fill text-warning{{ end }}"></i>
+            <span>{{ .Alert.Message }}</span>
         </div>
     </div>
+    {{ end }}
 
-    <nav class="navbar navbar-expand px-3 py-3">
-        <div class="container-fluid">
-            <a class="navbar-brand fw-bold d-flex align-items-center gap-2" href="/">
-                <img src="/static/favicon.svg" width="28" height="28" alt="Logo" class="d-inline-block align-text-top">
-                <span>Gallery<span class="text-primary">DL</span></span>
-            </a>
-            <div class="ms-auto">
-                <button class="btn btn-outline-secondary btn-icon border-0" onclick="toggleTheme()" id="themeBtn" title="Toggle Theme">
-                    <i class="bi bi-moon-stars-fill"></i>
-                </button>
+    {{ if .Images }}
+    <form action="/download-zip" method="POST" id="galleryForm">
+        <input type="hidden" name="page_title" value="{{ .Title }}">
+
+        <div class="container">
+            <div class="d-flex align-items-center justify-content-between mt-4 mb-2">
+                <h5 class="text-secondary fw-normal mb-0">
+                    <span id="countDisplay">{{ len .Images }}</span> images found
+                </h5>
+                <div class="d-flex gap-2">
+                    <button type="button" class="btn btn-sm btn-outline-secondary rounded-pill px-3" onclick="selectAll()">Select All</button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary rounded-pill px-3" onclick="deselectAll()">None</button>
+                </div>
             </div>
-        </div>
-    </nav>
 
-    <main class="flex-grow-1">
-
-        <section class="hero-section {{ if .Images }}compact{{ end }}">
-            <div class="container text-center">
-                {{ if not .Images }}
-                <h1 class="display-4 fw-bold mb-3 text-balance">Download Reddit Galleries in Seconds</h1>
-                <p class="text-secondary mb-5 fs-5">Paste a Reddit link below to view and download high-quality images.</p>
+            <div class="gallery-grid">
+                {{ range $i, $url := .Images }}
+                <div class="image-card selected" onclick="toggleSelection(this)">
+                    <div class="check-badge"><i class="bi bi-check-lg"></i></div>
+                    <input type="checkbox" name="image_urls" value="{{ $url }}" checked>
+                    <img src="{{ $url }}" alt="Image {{ $i }}" loading="lazy">
+                    <div class="card-actions" onclick="event.stopPropagation()">
+                        <a href="{{ $url }}" target="_blank" rel="noopener"
+                           class="btn btn-light btn-icon rounded-circle shadow-sm" title="View full size">
+                            <i class="bi bi-arrows-fullscreen"></i>
+                        </a>
+                    </div>
+                </div>
                 {{ end }}
-
-                <form action="/" method="POST" class="search-container" onsubmit="showLoading()">
-                    <input type="text" name="url" class="form-control search-input" id="urlInput"
-                           placeholder="Paste Reddit URL here (e.g., https://reddit.com/r/...)"
-                           value="{{ if not .Images }}{{ .URL }}{{ end }}" required autocomplete="off" {{ if not .Images }}autofocus{{ end }}>
-                    <button type="button" class="paste-btn" id="pasteBtn" onclick="pasteFromClipboard()" title="Paste from clipboard">
-                        <i class="bi bi-clipboard"></i>
-                    </button>
-                    <button type="submit" class="btn btn-primary search-btn">
-                        <i class="bi bi-arrow-right fs-5"></i>
-                    </button>
-                </form>
-            </div>
-        </section>
-
-        {{ if .Alert }}
-        <div class="container mt-4">
-            <div class="alert alert-{{ .Alert.Type }} border-0 shadow-sm d-flex align-items-center gap-3 rounded-4" role="alert">
-                <i class="bi {{ if eq .Alert.Type "success" }}bi-check-circle-fill text-success
-                              {{- else if eq .Alert.Type "info" }}bi-info-circle-fill text-info
-                              {{- else if eq .Alert.Type "danger" }}bi-x-circle-fill text-danger
-                              {{- else }}bi-exclamation-triangle-fill text-warning{{ end }} fs-4"></i>
-                <div>{{ .Alert.Message }}</div>
             </div>
         </div>
-        {{ end }}
 
-        {{ if .Images }}
-        <form action="/download-zip" method="POST" id="galleryForm">
-            <input type="hidden" name="page_title" value="{{ .Title }}">
-
-            <div class="container">
-                <div class="d-flex align-items-center justify-content-between mt-4 mb-2">
-                    <h5 class="text-secondary fw-normal mb-0"><span id="countDisplay">{{ len .Images }}</span> images found</h5>
-                    <div class="d-flex gap-2">
-                        <button type="button" class="btn btn-sm btn-outline-secondary rounded-pill px-3" onclick="selectAll()">Select All</button>
-                        <button type="button" class="btn btn-sm btn-outline-secondary rounded-pill px-3" onclick="deselectAll()">None</button>
-                    </div>
-                </div>
-
-                <div class="gallery-grid">
-                    {{ range $i, $url := .Images }}
-                    <div class="image-card selected" onclick="toggleSelection(this)">
-                        <div class="check-badge"><i class="bi bi-check-lg"></i></div>
-                        <input type="checkbox" name="image_urls" value="{{ $url }}" checked class="d-none">
-                        <img src="{{ $url }}" alt="Gallery Image {{ $i }}" loading="lazy">
-                        <div class="card-actions" onclick="event.stopPropagation()">
-                            <a href="{{ $url }}" target="_blank" class="btn btn-light btn-icon rounded-circle shadow-sm" title="View Full Size">
-                                <i class="bi bi-arrows-fullscreen"></i>
-                            </a>
-                        </div>
-                    </div>
-                    {{ end }}
-                </div>
+        <div class="action-bar visible" id="actionBar">
+            <div class="d-flex align-items-center gap-2 border-end pe-3">
+                <span class="fw-bold" id="selectedCount">{{ len .Images }}</span>
+                <span class="text-secondary small d-none d-sm-inline">selected</span>
             </div>
-
-            <div class="action-bar visible" id="actionBar">
-                <div class="d-flex align-items-center gap-2 gap-sm-3 border-end pe-2 pe-sm-3 me-1">
-                    <span class="fw-bold" id="selectedCount">{{ len .Images }}</span>
-                    <span class="text-secondary small d-none d-sm-inline">selected</span>
-                </div>
-
-                <div class="input-group input-group-sm flex-nowrap align-items-center">
-                    <span class="input-group-text bg-transparent border-0 text-secondary ps-0 pe-2 d-none d-sm-block">Format:</span>
-                    <select name="format" class="form-select border rounded-pill bg-body-tertiary py-1 ps-3 pe-5" style="width: auto; cursor: pointer; min-width: auto;" id="formatSelect">
-                        <option value="original" selected>Original</option>
-                        <option value="jpg">JPG</option>
-                        <option value="png">PNG</option>
-                    </select>
-                </div>
-
-                <button type="submit" class="btn btn-primary rounded-pill px-3 px-sm-4 fw-bold shadow-sm d-flex align-items-center gap-2 text-nowrap" id="downloadBtn">
-                    <i class="bi bi-download"></i>
-                    <span id="downloadText">Download</span>
-                </button>
-            </div>
-        </form>
-        {{ end }}
-
-        {{ if not .Images }}
-        <div class="text-center text-secondary opacity-50 mt-5 pt-5">
-            <i class="bi bi-images display-1"></i>
+            <select name="format" id="formatSelect"
+                    class="form-select border rounded-pill bg-body-tertiary py-1 ps-3"
+                    style="width:auto;cursor:pointer;">
+                <option value="original">Original</option>
+                <option value="jpg">JPG</option>
+                <option value="png">PNG</option>
+            </select>
+            <button type="submit" id="downloadBtn"
+                    class="btn btn-primary rounded-pill px-4 fw-bold d-flex align-items-center gap-2 text-nowrap">
+                <i class="bi bi-download"></i>
+                <span id="downloadText">Download</span>
+            </button>
         </div>
-        {{ end }}
+    </form>
+    {{ end }}
 
-    </main>
+    {{ if not .Images }}
+    <div class="text-center text-secondary opacity-25 mt-5 pt-5">
+        <i class="bi bi-images display-1"></i>
+    </div>
+    {{ end }}
 
-    <footer class="text-center py-4 text-secondary small">
-        <p class="mb-0">
-            Designed for simplicity {{ if .Title }}&bull; {{ .Title }}{{ end }}
-            &nbsp;&bull;&nbsp;
-            <a href="https://github.com/dacrab/reddit-gallery-dl" target="_blank" rel="noopener noreferrer"
-               class="text-secondary text-decoration-none" title="View on GitHub">
-                <i class="bi bi-github fs-6 align-middle"></i>
-            </a>
-        </p>
-    </footer>
+</main>
 
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
-    <script>
-        // ── Theme ────────────────────────────────────────────────────────────
-        function applyTheme(theme) {
-            document.documentElement.setAttribute('data-bs-theme', theme);
-            document.getElementById('themeBtn').querySelector('i').className =
-                theme === 'dark' ? 'bi bi-moon-stars-fill' : 'bi bi-sun-fill';
-        }
+<script>
+// Theme
+function applyTheme(t) {
+    document.documentElement.setAttribute('data-bs-theme', t);
+    document.querySelector('#themeBtn i').className = t === 'dark' ? 'bi bi-moon-stars-fill' : 'bi bi-sun-fill';
+}
+function toggleTheme() {
+    const next = document.documentElement.getAttribute('data-bs-theme') === 'dark' ? 'light' : 'dark';
+    localStorage.setItem('theme', next);
+    applyTheme(next);
+}
+applyTheme(localStorage.getItem('theme') || 'dark');
 
-        function toggleTheme() {
-            const next = document.documentElement.getAttribute('data-bs-theme') === 'dark' ? 'light' : 'dark';
-            localStorage.setItem('theme', next);
-            applyTheme(next);
-        }
+// Loading
+function showLoading() {
+    document.activeElement?.blur();
+    document.getElementById('loadingOverlay').style.display = 'flex';
+}
 
-        applyTheme(localStorage.getItem('theme') || 'dark');
+// Paste
+(function() {
+    const btn = document.getElementById('pasteBtn');
+    if (!btn) return;
+    if (!navigator.clipboard?.readText) { btn.hidden = true; return; }
+})();
 
-        // ── Gallery Selection ────────────────────────────────────────────────
-        const actionBar   = document.getElementById('actionBar');
-        const countSpan   = document.getElementById('selectedCount');
-        const downloadBtn = document.getElementById('downloadBtn');
+async function pasteFromClipboard() {
+    const input = document.getElementById('urlInput');
+    const btn   = document.getElementById('pasteBtn');
+    const icon  = btn.querySelector('i');
+    try {
+        input.value = (await navigator.clipboard.readText()).trim();
+        input.focus();
+        icon.className = 'bi bi-clipboard-check';
+        btn.classList.add('success');
+        setTimeout(() => { icon.className = 'bi bi-clipboard'; btn.classList.remove('success'); }, 1500);
+    } catch { input.focus(); input.select(); }
+}
 
-        function setCardSelected(card, selected) {
-            card.querySelector('input[type="checkbox"]').checked = selected;
-            card.classList.toggle('selected', selected);
-        }
+// Gallery
+const actionBar   = document.getElementById('actionBar');
+const countSpan   = document.getElementById('selectedCount');
+const downloadBtn = document.getElementById('downloadBtn');
 
-        function toggleSelection(card) {
-            const cb = card.querySelector('input[type="checkbox"]');
-            setCardSelected(card, !cb.checked);
-            updateActionBar();
-        }
+function toggleSelection(card) {
+    const cb = card.querySelector('input[type="checkbox"]');
+    cb.checked = !cb.checked;
+    card.classList.toggle('selected', cb.checked);
+    syncBar();
+}
+function selectAll()   { document.querySelectorAll('.image-card').forEach(c => { c.querySelector('input').checked = true;  c.classList.add('selected');    }); syncBar(); }
+function deselectAll() { document.querySelectorAll('.image-card').forEach(c => { c.querySelector('input').checked = false; c.classList.remove('selected'); }); syncBar(); }
+function syncBar() {
+    const n = document.querySelectorAll('input[name="image_urls"]:checked').length;
+    if (countSpan)   countSpan.textContent = n;
+    if (downloadBtn) downloadBtn.disabled = n === 0;
+    if (actionBar)   actionBar.classList.toggle('visible', n > 0);
+}
 
-        function selectAll() {
-            document.querySelectorAll('.image-card').forEach(c => setCardSelected(c, true));
-            updateActionBar();
-        }
-
-        function deselectAll() {
-            document.querySelectorAll('.image-card').forEach(c => setCardSelected(c, false));
-            updateActionBar();
-        }
-
-        function updateActionBar() {
-            const selected = document.querySelectorAll('input[name="image_urls"]:checked').length;
-            countSpan.textContent = selected;
-            downloadBtn.disabled = selected === 0;
-            actionBar.classList.toggle('visible', selected > 0);
-        }
-
-        // ── Format Label ─────────────────────────────────────────────────────
-        const formatSelect = document.getElementById('formatSelect');
-        if (formatSelect) {
-            formatSelect.addEventListener('change', function () {
-                const fmt = this.value;
-                document.getElementById('downloadText').textContent =
-                    fmt === 'original' ? 'Download' : `Download ${fmt.toUpperCase()}`;
-            });
-        }
-
-        // ── Paste from Clipboard ─────────────────────────────────────────────
-        const pasteBtn = document.getElementById('pasteBtn');
-
-        // Only show the paste button if the Clipboard API is available.
-        if (pasteBtn && !navigator.clipboard?.readText) {
-            pasteBtn.hidden = true;
-            const urlInput = document.getElementById('urlInput');
-            if (urlInput) urlInput.style.paddingRight = '3.5rem';
-        }
-
-        async function pasteFromClipboard() {
-            const input = document.getElementById('urlInput');
-            const btn   = document.getElementById('pasteBtn');
-            const icon  = btn.querySelector('i');
-
-            try {
-                const text = await navigator.clipboard.readText();
-                input.value = text.trim();
-                input.focus();
-                // Brief visual confirmation
-                icon.className = 'bi bi-clipboard-check';
-                btn.classList.add('success');
-                setTimeout(() => {
-                    icon.className = 'bi bi-clipboard';
-                    btn.classList.remove('success');
-                }, 1500);
-            } catch {
-                // Permission denied — focus input so the user can paste manually.
-                input.focus();
-                input.select();
-            }
-        }
-
-        // ── Loading Overlay ──────────────────────────────────────────────────
-        function showLoading() {
-            document.activeElement?.blur();
-            document.getElementById('loadingOverlay').style.display = 'flex';
-        }
-
-    </script>
+// Format label
+const fmt = document.getElementById('formatSelect');
+if (fmt) fmt.addEventListener('change', function() {
+    document.getElementById('downloadText').textContent =
+        this.value === 'original' ? 'Download' : `Download ${this.value.toUpperCase()}`;
+});
+</script>
 </body>
 </html>
