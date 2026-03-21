@@ -9,10 +9,13 @@ import (
 	"html"
 	"io"
 	"log/slog"
+	"math/rand/v2"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
+	"golang.org/x/sync/singleflight"
 	"time"
 )
 
@@ -22,7 +25,15 @@ const (
 	defaultTimeout = 120 * time.Second
 	maxRetries     = 3
 	baseBackoff    = 2 * time.Second
+	cacheTTL       = 5 * time.Minute
+	cooldownPeriod = 30 * time.Second // back off proactively after a 429
 )
+
+// cacheEntry holds a cached gallery result with an expiry time.
+type cacheEntry struct {
+	gallery *Gallery
+	expiry  time.Time
+}
 
 var (
 	ErrInvalidURL   = errors.New("invalid reddit url")
@@ -34,6 +45,12 @@ var (
 type RedditClient struct {
 	client           *http.Client
 	noRedirectClient *http.Client
+
+	// cache deduplicates Reddit API calls across requests.
+	cacheMu  sync.Mutex
+	cache    map[string]cacheEntry
+	group    singleflight.Group   // coalesces concurrent fetches for the same URL
+	cooldown time.Time            // proactive back-off: don't hit Reddit until after this
 }
 
 func NewRedditClient() *RedditClient {
@@ -61,6 +78,7 @@ func NewRedditClient() *RedditClient {
 				return http.ErrUseLastResponse
 			},
 		},
+		cache: make(map[string]cacheEntry),
 	}
 }
 
@@ -148,7 +166,11 @@ func doWithRetry(ctx context.Context, client *http.Client, req *http.Request) (*
 		}
 		backoff *= 2
 
-		slog.Warn("Reddit rate limited, retrying", "attempt", attempt+1, "wait", wait)
+		// Add ±25% jitter to prevent thundering herd under concurrent load.
+		jitter := time.Duration(rand.Int64N(int64(wait / 2))) - wait/4
+		wait += jitter
+
+		slog.Warn("Reddit rate limited, retrying", "attempt", attempt+1, "wait", wait.Round(time.Millisecond))
 
 		select {
 		case <-ctx.Done():
@@ -173,12 +195,61 @@ func newRequest(ctx context.Context, method, targetURL string) (*http.Request, e
 }
 
 // FetchGallery resolves a Reddit post URL and returns its gallery images.
+// Results are cached for cacheTTL. Concurrent requests for the same URL are
+// coalesced via singleflight. A proactive cooldown is applied after a 429.
 func (r *RedditClient) FetchGallery(ctx context.Context, postURL string) (*Gallery, error) {
 	resolvedURL, err := r.resolveURL(ctx, postURL)
 	if err != nil {
 		return nil, err
 	}
 
+	// Cache lookup.
+	r.cacheMu.Lock()
+	if e, ok := r.cache[resolvedURL]; ok && time.Now().Before(e.expiry) {
+		r.cacheMu.Unlock()
+		slog.Debug("Gallery cache hit", "url", resolvedURL)
+		return e.gallery, nil
+	}
+	r.cacheMu.Unlock()
+
+	// Proactive cooldown — if we recently got rate-limited, fail fast.
+	r.cacheMu.Lock()
+	cooldown := r.cooldown
+	r.cacheMu.Unlock()
+	if wait := time.Until(cooldown); wait > 0 {
+		slog.Warn("Proactive rate limit cooldown", "wait", wait.Round(time.Second))
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(wait):
+		}
+	}
+
+	// Singleflight — deduplicate concurrent fetches for the same URL.
+	v, err, _ := r.group.Do(resolvedURL, func() (any, error) {
+		return r.fetchGallery(ctx, resolvedURL)
+	})
+	if err != nil {
+		if errors.Is(err, ErrRateLimited) {
+			r.cacheMu.Lock()
+			r.cooldown = time.Now().Add(cooldownPeriod)
+			r.cacheMu.Unlock()
+		}
+		return nil, err
+	}
+
+	gallery := v.(*Gallery)
+
+	// Store in cache.
+	r.cacheMu.Lock()
+	r.cache[resolvedURL] = cacheEntry{gallery: gallery, expiry: time.Now().Add(cacheTTL)}
+	r.cacheMu.Unlock()
+
+	return gallery, nil
+}
+
+// fetchGallery performs the actual Reddit API call. Called only via singleflight.
+func (r *RedditClient) fetchGallery(ctx context.Context, resolvedURL string) (*Gallery, error) {
 	apiURL := fmt.Sprintf("%s.json", strings.TrimRight(resolvedURL, "/"))
 	req, err := newRequest(ctx, http.MethodGet, apiURL)
 	if err != nil {
