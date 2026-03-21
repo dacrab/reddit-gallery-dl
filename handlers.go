@@ -14,7 +14,6 @@ import (
 	"net/url"
 	"path"
 	"strings"
-	"sync"
 	"unicode"
 )
 
@@ -32,53 +31,36 @@ func NewServer(tmpl *template.Template) *Server {
 
 func (s *Server) Routes() *http.ServeMux {
 	mux := http.NewServeMux()
-	// Static files: long-lived cache (1 year) since filenames are stable.
 	static := http.StripPrefix("/static/", http.FileServer(http.Dir("./static")))
-	mux.Handle("/static/", withCacheControl("public, max-age=31536000, immutable", static))
+	mux.Handle("/static/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		static.ServeHTTP(w, r)
+	}))
 	mux.HandleFunc("/", withGzip(s.handleIndex))
 	mux.HandleFunc("/download-zip", s.handleDownloadZip)
 	mux.HandleFunc("/download-single", s.handleDownloadSingle)
 	return mux
 }
 
-// withCacheControl wraps a handler to set a Cache-Control header.
-func withCacheControl(value string, h http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Cache-Control", value)
-		h.ServeHTTP(w, r)
-	})
-}
-
-// gzipPool reuses gzip writers to avoid allocating one per request.
-var gzipPool = sync.Pool{
-	New: func() any { w, _ := gzip.NewWriterLevel(io.Discard, gzip.BestSpeed); return w },
-}
-
-// gzipResponseWriter wraps http.ResponseWriter to compress the response body.
-type gzipResponseWriter struct {
+type gzipWriter struct {
 	http.ResponseWriter
 	gz *gzip.Writer
 }
 
-func (g *gzipResponseWriter) Write(b []byte) (int, error) { return g.gz.Write(b) }
-func (g *gzipResponseWriter) WriteHeader(code int)        { g.ResponseWriter.WriteHeader(code) }
+func (g gzipWriter) Write(b []byte) (int, error) { return g.gz.Write(b) }
 
-// withGzip wraps a HandlerFunc to gzip the response when the client supports it.
+// withGzip compresses HTML responses when the client supports it.
 func withGzip(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
 			h(w, r)
 			return
 		}
-		gz := gzipPool.Get().(*gzip.Writer)
-		gz.Reset(w)
-		defer func() {
-			gz.Close()
-			gzipPool.Put(gz)
-		}()
+		gz, _ := gzip.NewWriterLevel(w, gzip.BestSpeed)
+		defer gz.Close()
 		w.Header().Set("Content-Encoding", "gzip")
-		w.Header().Del("Content-Length") // length changes after compression
-		h(&gzipResponseWriter{w, gz}, r)
+		w.Header().Del("Content-Length")
+		h(gzipWriter{w, gz}, r)
 	}
 }
 
@@ -181,14 +163,10 @@ func (s *Server) handleDownloadZip(w http.ResponseWriter, r *http.Request) {
 
 	title := cleanFilename(r.FormValue("page_title"))
 
-	// Prefetch the first successful image before writing headers so we can
-	// return a proper error if everything fails, without buffering the whole zip.
-	type prefetched struct {
-		body io.ReadCloser
-		ext  string
-		idx  int
-	}
-	var first *prefetched
+	// Fetch the first image before writing headers — lets us return a real
+	// error if everything fails instead of sending a corrupt empty zip.
+	var firstBody io.ReadCloser
+	var firstExt string
 	firstIdx := 0
 	for firstIdx < len(urls) {
 		body, ext, err := s.reddit.StreamImage(r.Context(), urls[firstIdx])
@@ -197,11 +175,11 @@ func (s *Server) handleDownloadZip(w http.ResponseWriter, r *http.Request) {
 			firstIdx++
 			continue
 		}
-		first = &prefetched{body, ext, firstIdx}
+		firstBody, firstExt = body, ext
 		firstIdx++
 		break
 	}
-	if first == nil {
+	if firstBody == nil {
 		http.Error(w, "No images could be downloaded", http.StatusBadGateway)
 		return
 	}
@@ -224,7 +202,7 @@ func (s *Server) handleDownloadZip(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	writeEntry(first.idx, first.body, first.ext)
+	writeEntry(firstIdx-1, firstBody, firstExt)
 
 	for i := firstIdx; i < len(urls); i++ {
 		if r.Context().Err() != nil {

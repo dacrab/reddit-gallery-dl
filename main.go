@@ -28,7 +28,7 @@ func main() {
 		Handler:           NewServer(tmpl).Routes(),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      150 * time.Second, // must exceed Reddit client timeout
+		WriteTimeout:      60 * time.Second, // must exceed Reddit client timeout (30s)
 		IdleTimeout:       120 * time.Second,
 	}
 

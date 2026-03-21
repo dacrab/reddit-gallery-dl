@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	_ "golang.org/x/image/webp"
-	_ "image/gif" // register gif decoder for image.Decode format detection
 )
 
 // isOriginalFormat reports whether the requested format means "keep as-is".
