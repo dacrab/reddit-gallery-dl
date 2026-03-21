@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/zip"
+	"compress/gzip"
 	"context"
 	"errors"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"net/url"
 	"path"
 	"strings"
+	"sync"
 	"unicode"
 )
 
@@ -30,11 +32,54 @@ func NewServer(tmpl *template.Template) *Server {
 
 func (s *Server) Routes() *http.ServeMux {
 	mux := http.NewServeMux()
-	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("./static"))))
-	mux.HandleFunc("/", s.handleIndex)
+	// Static files: long-lived cache (1 year) since filenames are stable.
+	static := http.StripPrefix("/static/", http.FileServer(http.Dir("./static")))
+	mux.Handle("/static/", withCacheControl("public, max-age=31536000, immutable", static))
+	mux.HandleFunc("/", withGzip(s.handleIndex))
 	mux.HandleFunc("/download-zip", s.handleDownloadZip)
 	mux.HandleFunc("/download-single", s.handleDownloadSingle)
 	return mux
+}
+
+// withCacheControl wraps a handler to set a Cache-Control header.
+func withCacheControl(value string, h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", value)
+		h.ServeHTTP(w, r)
+	})
+}
+
+// gzipPool reuses gzip writers to avoid allocating one per request.
+var gzipPool = sync.Pool{
+	New: func() any { w, _ := gzip.NewWriterLevel(io.Discard, gzip.BestSpeed); return w },
+}
+
+// gzipResponseWriter wraps http.ResponseWriter to compress the response body.
+type gzipResponseWriter struct {
+	http.ResponseWriter
+	gz *gzip.Writer
+}
+
+func (g *gzipResponseWriter) Write(b []byte) (int, error) { return g.gz.Write(b) }
+func (g *gzipResponseWriter) WriteHeader(code int)        { g.ResponseWriter.WriteHeader(code) }
+
+// withGzip wraps a HandlerFunc to gzip the response when the client supports it.
+func withGzip(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+			h(w, r)
+			return
+		}
+		gz := gzipPool.Get().(*gzip.Writer)
+		gz.Reset(w)
+		defer func() {
+			gz.Close()
+			gzipPool.Put(gz)
+		}()
+		w.Header().Set("Content-Encoding", "gzip")
+		w.Header().Del("Content-Length") // length changes after compression
+		h(&gzipResponseWriter{w, gz}, r)
+	}
 }
 
 // render executes the named template, logging any error instead of silently dropping it.

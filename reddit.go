@@ -53,6 +53,25 @@ type RedditClient struct {
 	cooldown time.Time            // proactive back-off: don't hit Reddit until after this
 }
 
+// startCacheEviction runs a background goroutine that removes expired cache
+// entries every cacheTTL to prevent unbounded memory growth.
+func (r *RedditClient) startCacheEviction() {
+	go func() {
+		t := time.NewTicker(cacheTTL)
+		defer t.Stop()
+		for range t.C {
+			now := time.Now()
+			r.cacheMu.Lock()
+			for k, e := range r.cache {
+				if now.After(e.expiry) {
+					delete(r.cache, k)
+				}
+			}
+			r.cacheMu.Unlock()
+		}
+	}()
+}
+
 func NewRedditClient() *RedditClient {
 	// Single shared transport — both clients talk to the same Reddit hosts
 	// so sharing the connection pool avoids redundant TLS handshakes.
@@ -64,7 +83,7 @@ func NewRedditClient() *RedditClient {
 		MaxIdleConnsPerHost: 5,
 		IdleConnTimeout:     60 * time.Second,
 	}
-	return &RedditClient{
+	rc := &RedditClient{
 		client: &http.Client{
 			Timeout:   defaultTimeout,
 			Transport: transport,
@@ -80,6 +99,8 @@ func NewRedditClient() *RedditClient {
 		},
 		cache: make(map[string]cacheEntry),
 	}
+	rc.startCacheEviction()
+	return rc
 }
 
 type Gallery struct {
@@ -226,8 +247,12 @@ func (r *RedditClient) FetchGallery(ctx context.Context, postURL string) (*Galle
 	}
 
 	// Singleflight — deduplicate concurrent fetches for the same URL.
+	// Use a detached context with a timeout so one cancelling caller does
+	// not abort the in-flight request that other callers are sharing.
+	fetchCtx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
+	defer cancel()
 	v, err, _ := r.group.Do(resolvedURL, func() (any, error) {
-		return r.fetchGallery(ctx, resolvedURL)
+		return r.fetchGallery(fetchCtx, resolvedURL)
 	})
 	if err != nil {
 		if errors.Is(err, ErrRateLimited) {

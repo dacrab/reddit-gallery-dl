@@ -31,11 +31,6 @@ func resolvedExt(originalExt, format string) string {
 	return "." + format
 }
 
-// isVideoExt reports whether ext is a video format that cannot be transcoded.
-func isVideoExt(ext string) bool {
-	return ext == ".mp4" || ext == ".gifv"
-}
-
 // streamImage copies src to dst, converting the image format on-the-fly if needed.
 // Videos and GIFs are always copied as-is regardless of format — frame-accurate
 // transcoding requires ffmpeg which is not available here.
