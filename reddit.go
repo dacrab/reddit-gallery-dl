@@ -31,10 +31,10 @@ var (
 	ErrRateLimited  = errors.New("reddit is rate limiting requests")
 )
 
-// newTransport returns a tuned HTTP/1.1 transport. Reddit's CDN applies
-// stricter rate limiting to HTTP/2 connections from non-browser clients.
-// Connection pool is kept small since all requests go to the same two hosts
-// (www.reddit.com and i.redd.it / preview.redd.it).
+// newTransport returns a shared, tuned HTTP/1.1 transport. Reddit's CDN
+// applies stricter rate limiting to HTTP/2 connections from non-browser
+// clients. A single transport is shared across all clients so they reuse
+// the same connection pool for the same handful of hosts.
 func newTransport() *http.Transport {
 	return &http.Transport{
 		TLSClientConfig:     &tls.Config{MinVersion: tls.VersionTLS12},
@@ -51,17 +51,18 @@ type RedditClient struct {
 }
 
 func NewRedditClient() *RedditClient {
+	transport := newTransport()
 	return &RedditClient{
 		client: &http.Client{
 			Timeout:   defaultTimeout,
-			Transport: newTransport(),
+			Transport: transport,
 		},
-		// noRedirectClient is used for resolving share links (/s/...).
-		// By not following redirects we avoid hitting the destination page,
-		// which can return 429 for restricted subreddits without a session.
+		// noRedirectClient shares the transport but does not follow redirects.
+		// Used for share links (/r/<sub>/s/<id>) — we only need the Location
+		// header from the first response, not the destination page.
 		noRedirectClient: &http.Client{
 			Timeout:   defaultTimeout,
-			Transport: newTransport(),
+			Transport: transport,
 			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 				return http.ErrUseLastResponse
 			},
@@ -110,7 +111,7 @@ type redditPost struct {
 
 // doWithRetry executes req using client, retrying up to maxRetries times on
 // HTTP 429 responses. It honours Reddit's Retry-After header when present,
-// otherwise it falls back to exponential backoff (5s, 10s, 20s, …).
+// otherwise it falls back to exponential backoff (2s, 4s, 8s, …).
 // The caller is responsible for closing the response body on success.
 func doWithRetry(ctx context.Context, client *http.Client, req *http.Request) (*http.Response, error) {
 	backoff := baseBackoff
@@ -247,7 +248,9 @@ func (r *RedditClient) resolveShareLink(ctx context.Context, shareURL string) (*
 		return nil, err
 	}
 
-	resp, err := doWithRetry(ctx, r.noRedirectClient, req)
+	// Share link resolution is a single redirect — no retry needed here.
+	// Reddit does not rate-limit the share link endpoint itself.
+	resp, err := r.noRedirectClient.Do(req)
 	if err != nil {
 		return nil, err
 	}

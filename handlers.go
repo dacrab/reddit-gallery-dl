@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/zip"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -12,7 +13,6 @@ import (
 	"net/url"
 	"path"
 	"strings"
-	"syscall"
 	"unicode"
 )
 
@@ -38,15 +38,24 @@ func (s *Server) Routes() *http.ServeMux {
 }
 
 // render executes the named template, logging any error instead of silently dropping it.
-// Broken pipe errors are logged at debug level — they just mean the client disconnected.
+// Broken pipe / connection reset errors are ignored — they just mean the client left.
 func (s *Server) render(w http.ResponseWriter, data TemplateData) {
 	if err := s.tmpl.ExecuteTemplate(w, "index.html", data); err != nil {
-		if errors.Is(err, syscall.EPIPE) {
-			slog.Debug("Client disconnected before response could be written")
+		if isClientDisconnect(err) {
 			return
 		}
 		slog.Error("Template render failed", "error", err)
 	}
+}
+
+// isClientDisconnect reports whether err is a broken pipe or connection reset,
+// which happens when the client closes the connection before we finish writing.
+func isClientDisconnect(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	return strings.Contains(s, "broken pipe") || strings.Contains(s, "connection reset by peer")
 }
 
 type Alert struct {
@@ -62,6 +71,10 @@ type TemplateData struct {
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
 	if r.Method != http.MethodPost {
 		s.render(w, TemplateData{})
 		return
@@ -125,15 +138,18 @@ func (s *Server) handleDownloadZip(w http.ResponseWriter, r *http.Request) {
 	}
 
 	title := cleanFilename(r.FormValue("page_title"))
-	w.Header().Set("Content-Type", "application/zip")
-	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": title + ".zip"}))
 
-	z := zip.NewWriter(w)
-	defer z.Close()
+	// Buffer the zip in memory so we can set headers only after confirming
+	// at least one image was written. Writing headers before the loop would
+	// send a 200 + Content-Type before we know if anything succeeded.
+	var buf bytes.Buffer
+	z := zip.NewWriter(&buf)
+	written := 0
 
 	for i, u := range urls {
 		if r.Context().Err() != nil {
 			slog.Info("Client disconnected, stopping zip stream")
+			z.Close()
 			return
 		}
 
@@ -154,6 +170,25 @@ func (s *Server) handleDownloadZip(w http.ResponseWriter, r *http.Request) {
 			slog.Error("Zip write error", "url", u, "error", err)
 		}
 		body.Close()
+		written++
+	}
+
+	if err := z.Close(); err != nil {
+		slog.Error("Zip close error", "error", err)
+		http.Error(w, "Failed to create zip", http.StatusInternalServerError)
+		return
+	}
+
+	if written == 0 {
+		http.Error(w, "No images could be downloaded", http.StatusBadGateway)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": title + ".zip"}))
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", buf.Len()))
+	if _, err := buf.WriteTo(w); err != nil && !isClientDisconnect(err) {
+		slog.Error("Zip send error", "error", err)
 	}
 }
 

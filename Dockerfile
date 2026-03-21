@@ -13,6 +13,5 @@ COPY --from=builder /app/templates ./templates
 COPY --from=builder /app/static ./static
 RUN chown -R app:app /home/app
 USER app
-ENV PORT=5000
 EXPOSE 5000
 CMD ["./reddit-gallery-dl"]

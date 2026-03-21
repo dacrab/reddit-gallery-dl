@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"time"
 )
 
 func main() {
@@ -19,8 +20,17 @@ func main() {
 		port = "5000"
 	}
 
+	srv := &http.Server{
+		Addr:              ":" + port,
+		Handler:           NewServer(tmpl).Routes(),
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      150 * time.Second, // must exceed Reddit client timeout
+		IdleTimeout:       120 * time.Second,
+	}
+
 	slog.Info("Starting Reddit Gallery DL", "port", port)
-	if err := http.ListenAndServe(":"+port, NewServer(tmpl).Routes()); err != nil {
+	if err := srv.ListenAndServe(); err != nil {
 		slog.Error("Server failed", "error", err)
 		os.Exit(1)
 	}
