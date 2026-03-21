@@ -1,61 +1,43 @@
-# Reddit Gallery DL 🚀
+# Reddit Gallery DL
 
-A high-performance, memory-efficient web tool to download Reddit galleries. Written in Go, it streams ZIP archives on-the-fly, ensuring low memory usage even for massive galleries.
+A web tool to browse and download Reddit galleries — images, GIFs and videos — as a ZIP file or individually.
 
-## ✨ Features
+## Features
 
--   **🚀 Zero-Allocation Streaming:** Downloads are streamed directly from Reddit to the client's ZIP file. Server RAM usage stays near ~10MB.
--   **📱 Mobile First:** Fully responsive UI with a touch-friendly grid and **Dark Mode** support.
--   **🔒 Smart Validation:** Automatically handles shortened URLs (`redd.it`), NSFW warnings, and redirects.
--   **⚡ Production Ready:**
-    -   Context-aware cancellation (stops downloads if tab closes).
-    -   Tiny Docker image (~15MB) based on Alpine Linux.
-    -   Robust error handling.
--   **🎨 Modern UI:** Built with Bootstrap 5, featuring sticky toolbars and loading states.
+- **Gallery support** — multi-image posts, GIFs, Reddit-hosted videos (`v.redd.it`)
+- **ZIP download** — stream selected media directly to a ZIP, no server buffering
+- **Smart rate limiting** — PRAW-style proactive throttling respects Reddit's API headers
+- **Zero external dependencies** — pure Go standard library
+- **Dark/light mode** — persisted via localStorage
+- **Mobile friendly** — responsive grid, works on any screen size
 
-## 🛠️ Quick Start
+## Quick Start
 
-### 🐳 Using Docker (Recommended)
+```bash
+go run .
+# visit http://localhost:5000
+```
 
-The easiest way to run the application:
+Or with Docker:
 
 ```bash
 docker build -t reddit-gallery-dl .
 docker run -p 5000:5000 reddit-gallery-dl
 ```
 
-Visit **http://localhost:5000**.
+## Deployment
 
-### 💻 Local Development
+Deployed on [Render](https://render.com) via the `Dockerfile`. Set the `PORT` environment variable if needed (defaults to 5000).
 
-Requires **Go 1.25+**.
+## Architecture
 
-```bash
-# Clone the repository
-git clone https://github.com/dacrab/reddit-gallery-dl.git
-cd reddit-gallery-dl
+| File | Purpose |
+|---|---|
+| `main.go` | HTTP server setup and timeouts |
+| `reddit.go` | Reddit API client, rate limiter, media extraction |
+| `handlers.go` | HTTP handlers, gzip compression, ZIP streaming |
+| `image.go` | File extension detection |
 
-# Run the server
-go run .
-```
-
-## ☁️ Deployment
-
-Perfect for PaaS providers like **Render**, **Railway**, or **Fly.io**.
-
-1.  Fork this repository.
-2.  Connect your GitHub account to your hosting provider.
-3.  Create a new Web Service in your dashboard.
-4.  **Done!** (The platform will automatically detect the `Dockerfile`).
-
-*Note: The app listens on `$PORT` (defaults to 5000).*
-
-## 🏗️ Architecture
-
--   **`reddit.go`**: Reddit API client with typed errors and context support.
--   **`handlers.go`**: HTTP handlers, templates, image conversion, and ZIP streaming.
--   **`main.go`**: Server initialization and startup.
-
-## 📄 License
+## License
 
 MIT

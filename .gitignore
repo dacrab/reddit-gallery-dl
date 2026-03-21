@@ -1,8 +1,4 @@
 reddit-gallery-dl
-*.exe
-*.dll
-*.so
-*.dylib
 *.test
 *.out
 vendor/
@@ -10,4 +6,3 @@ vendor/
 .vscode/
 *.swp
 .DS_Store
-Thumbs.db
