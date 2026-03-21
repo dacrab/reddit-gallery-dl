@@ -238,7 +238,7 @@ func (r *RedditClient) resolveShareLink(ctx context.Context, shareURL string) (*
 		return nil, err
 	}
 
-	resp, err := r.noRedirectClient.Do(req)
+	resp, err := doWithRetry(ctx, r.noRedirectClient, req)
 	if err != nil {
 		return nil, err
 	}
