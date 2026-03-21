@@ -12,11 +12,13 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
-	"golang.org/x/sync/singleflight"
 	"time"
+
+	"golang.org/x/sync/singleflight"
 )
 
 const (
@@ -27,6 +29,11 @@ const (
 	baseBackoff    = 2 * time.Second
 	cacheTTL       = 5 * time.Minute
 	cooldownPeriod = 30 * time.Second // back off proactively after a 429
+
+	// Reddit OAuth2 endpoints.
+	tokenURL    = "https://www.reddit.com/api/v1/access_token"
+	oauthAPIURL = "https://oauth.reddit.com"
+	anonAPIURL  = "https://www.reddit.com"
 )
 
 // cacheEntry holds a cached gallery result with an expiry time.
@@ -42,9 +49,25 @@ var (
 	ErrRateLimited  = errors.New("reddit is rate limiting requests")
 )
 
+// token holds a Reddit OAuth2 bearer token and its expiry.
+type token struct {
+	value   string
+	expiry  time.Time
+}
+
+func (t *token) valid() bool {
+	return t.value != "" && time.Now().Before(t.expiry.Add(-30*time.Second))
+}
+
 type RedditClient struct {
 	client           *http.Client
 	noRedirectClient *http.Client
+
+	// OAuth2 credentials — optional, read from env at startup.
+	clientID     string
+	clientSecret string
+	tokenMu      sync.Mutex
+	tok          token
 
 	// cache deduplicates Reddit API calls across requests.
 	cacheMu  sync.Mutex
@@ -83,6 +106,14 @@ func NewRedditClient() *RedditClient {
 		MaxIdleConnsPerHost: 5,
 		IdleConnTimeout:     60 * time.Second,
 	}
+	clientID     := os.Getenv("REDDIT_CLIENT_ID")
+	clientSecret := os.Getenv("REDDIT_CLIENT_SECRET")
+	if clientID != "" && clientSecret != "" {
+		slog.Info("Reddit OAuth2 credentials found — using authenticated API (100 req/min)")
+	} else {
+		slog.Warn("No Reddit OAuth2 credentials — using unauthenticated API (rate limits apply). Set REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET.")
+	}
+
 	rc := &RedditClient{
 		client: &http.Client{
 			Timeout:   defaultTimeout,
@@ -97,7 +128,9 @@ func NewRedditClient() *RedditClient {
 				return http.ErrUseLastResponse
 			},
 		},
-		cache: make(map[string]cacheEntry),
+		clientID:     clientID,
+		clientSecret: clientSecret,
+		cache:        make(map[string]cacheEntry),
 	}
 	rc.startCacheEviction()
 	return rc
@@ -203,9 +236,82 @@ func doWithRetry(ctx context.Context, client *http.Client, req *http.Request) (*
 	return nil, ErrRateLimited
 }
 
-// newRequest builds an authenticated-style request with the standard headers
-// Reddit expects from API clients.
-func newRequest(ctx context.Context, method, targetURL string) (*http.Request, error) {
+// bearerToken returns a valid OAuth2 bearer token, fetching a new one if needed.
+// It is safe for concurrent use — only one goroutine fetches at a time.
+func (r *RedditClient) bearerToken(ctx context.Context) (string, error) {
+	r.tokenMu.Lock()
+	defer r.tokenMu.Unlock()
+
+	if r.tok.valid() {
+		return r.tok.value, nil
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenURL,
+		strings.NewReader("grant_type=client_credentials"))
+	if err != nil {
+		return "", err
+	}
+	req.SetBasicAuth(r.clientID, r.clientSecret)
+	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := r.client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("token fetch: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("token fetch status: %d", resp.StatusCode)
+	}
+
+	var result struct {
+		AccessToken string `json:"access_token"`
+		ExpiresIn   int    `json:"expires_in"`
+		Error       string `json:"error"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("token decode: %w", err)
+	}
+	if result.Error != "" {
+		return "", fmt.Errorf("token error: %s", result.Error)
+	}
+
+	r.tok = token{
+		value:  result.AccessToken,
+		expiry: time.Now().Add(time.Duration(result.ExpiresIn) * time.Second),
+	}
+	slog.Info("Reddit OAuth2 token refreshed", "expires_in", result.ExpiresIn)
+	return r.tok.value, nil
+}
+
+// newRequest builds a request with standard Reddit headers.
+// If OAuth2 credentials are configured, adds a Bearer token and targets
+// oauth.reddit.com (100 req/min). Otherwise falls back to www.reddit.com.
+func (r *RedditClient) newRequest(ctx context.Context, method, targetURL string) (*http.Request, error) {
+	if r.clientID != "" {
+		// Rewrite host to oauth.reddit.com for authenticated requests.
+		if u, err := url.Parse(targetURL); err == nil &&
+			(u.Host == "www.reddit.com" || u.Host == "reddit.com") {
+			u.Host = "oauth.reddit.com"
+			u.Scheme = "https"
+			targetURL = u.String()
+		}
+		tok, err := r.bearerToken(ctx)
+		if err != nil {
+			slog.Warn("OAuth2 token unavailable, falling back to unauthenticated", "error", err)
+		} else {
+			req, err := http.NewRequestWithContext(ctx, method, targetURL, nil)
+			if err != nil {
+				return nil, err
+			}
+			req.Header.Set("User-Agent", userAgent)
+			req.Header.Set("Authorization", "Bearer "+tok)
+			return req, nil
+		}
+	}
+
+	// Unauthenticated fallback.
 	req, err := http.NewRequestWithContext(ctx, method, targetURL, nil)
 	if err != nil {
 		return nil, err
@@ -276,7 +382,7 @@ func (r *RedditClient) FetchGallery(ctx context.Context, postURL string) (*Galle
 // fetchGallery performs the actual Reddit API call. Called only via singleflight.
 func (r *RedditClient) fetchGallery(ctx context.Context, resolvedURL string) (*Gallery, error) {
 	apiURL := fmt.Sprintf("%s.json", strings.TrimRight(resolvedURL, "/"))
-	req, err := newRequest(ctx, http.MethodGet, apiURL)
+	req, err := r.newRequest(ctx, http.MethodGet, apiURL)
 	if err != nil {
 		return nil, err
 	}
@@ -345,7 +451,7 @@ func isShareLink(path string) bool {
 // resolveShareLink fetches the share link without following the redirect and
 // returns the parsed URL from the Location header.
 func (r *RedditClient) resolveShareLink(ctx context.Context, shareURL string) (*url.URL, error) {
-	req, err := newRequest(ctx, http.MethodGet, shareURL)
+	req, err := r.newRequest(ctx, http.MethodGet, shareURL)
 	if err != nil {
 		return nil, err
 	}
@@ -372,7 +478,7 @@ func (r *RedditClient) resolveShareLink(ctx context.Context, shareURL string) (*
 
 // StreamImage fetches an image URL and returns its body and detected extension.
 func (r *RedditClient) StreamImage(ctx context.Context, urlStr string) (io.ReadCloser, string, error) {
-	req, err := newRequest(ctx, http.MethodGet, urlStr)
+	req, err := r.newRequest(ctx, http.MethodGet, urlStr)
 	if err != nil {
 		return nil, "", err
 	}
