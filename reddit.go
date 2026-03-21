@@ -42,6 +42,72 @@ type cacheEntry struct {
 	expiry  time.Time
 }
 
+// rateLimiter tracks Reddit's x-ratelimit-* headers and calculates the optimal
+// delay before each request to avoid hitting the limit. Algorithm ported from
+// PRAW (prawcore/rate_limit.py) — the battle-tested Python Reddit library.
+type rateLimiter struct {
+	mu          sync.Mutex
+	remaining   float64
+	used        float64
+	nextRequest time.Time // earliest time the next request should be made
+}
+
+func (rl *rateLimiter) delay(ctx context.Context) error {
+	rl.mu.Lock()
+	wait := time.Until(rl.nextRequest)
+	rl.mu.Unlock()
+	if wait <= 0 {
+		return nil
+	}
+	slog.Debug("Rate limiter sleeping", "wait", wait.Round(time.Millisecond))
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(wait):
+		return nil
+	}
+}
+
+func (rl *rateLimiter) update(headers http.Header) {
+	remaining := headers.Get("X-Ratelimit-Remaining")
+	used := headers.Get("X-Ratelimit-Used")
+	reset := headers.Get("X-Ratelimit-Reset")
+	if remaining == "" {
+		// No headers — conservatively decrement.
+		rl.mu.Lock()
+		if rl.remaining > 0 {
+			rl.remaining--
+			rl.used++
+		}
+		rl.mu.Unlock()
+		return
+	}
+
+	r, _ := strconv.ParseFloat(remaining, 64)
+	u, _ := strconv.ParseFloat(used, 64)
+	s, _ := strconv.ParseFloat(reset, 64)
+
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	rl.remaining = r
+	rl.used = u
+
+	if r <= 0 {
+		// Exhausted — wait until the window resets.
+		wait := time.Duration(max(s, 1)) * time.Second
+		rl.nextRequest = time.Now().Add(wait)
+		slog.Warn("Reddit rate limit exhausted, waiting for reset", "wait", wait)
+		return
+	}
+
+	// Spread remaining requests evenly across the reset window.
+	// Formula from PRAW: sleep = min(reset, max(reset - window*(1 - used/(remaining+used)), 0), 10)
+	windowSize := s
+	idealSleep := windowSize - windowSize*(1-u/(r+u))
+	sleep := min(max(idealSleep, 0), min(s, 10))
+	rl.nextRequest = time.Now().Add(time.Duration(sleep * float64(time.Second)))
+}
+
 var (
 	ErrInvalidURL   = errors.New("invalid reddit url")
 	ErrPostNotFound = errors.New("post not found or deleted")
@@ -68,6 +134,8 @@ type RedditClient struct {
 	clientSecret string
 	tokenMu      sync.Mutex
 	tok          token
+
+	rl rateLimiter // PRAW-style rate limiter shared across all API requests
 
 	// cache deduplicates Reddit API calls across requests.
 	cacheMu  sync.Mutex
@@ -190,44 +258,27 @@ type redditPost struct {
 	} `json:"preview"`
 }
 
-// doWithRetry executes req using client, retrying up to maxRetries times on
-// HTTP 429 responses. It honours Reddit's Retry-After header when present,
-// otherwise it falls back to exponential backoff (2s, 4s, 8s, …).
-// It also reads x-ratelimit-remaining and proactively sleeps when the quota
-// is nearly exhausted to avoid triggering a 429 in the first place.
+// doWithRetry executes req using client with PRAW-style rate limiting.
+// It sleeps before each request to stay within Reddit's rate limit window,
+// and retries up to maxRetries times on HTTP 429 responses.
 // The caller is responsible for closing the response body on success.
-func doWithRetry(ctx context.Context, client *http.Client, req *http.Request) (*http.Response, error) {
+func (r *RedditClient) doWithRetry(ctx context.Context, req *http.Request) (*http.Response, error) {
 	backoff := baseBackoff
 	for attempt := 0; attempt <= maxRetries; attempt++ {
-		resp, err := client.Do(req)
+		// Sleep if needed to respect the rate limit window.
+		if err := r.rl.delay(ctx); err != nil {
+			return nil, err
+		}
+
+		resp, err := r.client.Do(req)
 		if err != nil {
 			return nil, err
 		}
 
+		// Always update the rate limiter from response headers.
+		r.rl.update(resp.Header)
+
 		if resp.StatusCode != http.StatusTooManyRequests {
-			// Proactively throttle if quota is nearly exhausted.
-			if remaining := resp.Header.Get("X-Ratelimit-Remaining"); remaining != "" {
-				if r, err := strconv.ParseFloat(remaining, 64); err == nil && r < 5 {
-					resetSecs := 60.0
-					if rs := resp.Header.Get("X-Ratelimit-Reset"); rs != "" {
-						if s, err := strconv.ParseFloat(rs, 64); err == nil && s > 0 {
-							resetSecs = s
-						}
-					}
-					// Spread remaining requests evenly across the reset window.
-					wait := time.Duration(resetSecs/max(r, 1)*float64(time.Second)) / 2
-					if wait > 10*time.Second {
-						wait = 10 * time.Second
-					}
-					slog.Warn("Reddit quota low, throttling", "remaining", r, "reset_in", resetSecs, "wait", wait.Round(time.Millisecond))
-					select {
-					case <-ctx.Done():
-						resp.Body.Close()
-						return nil, ctx.Err()
-					case <-time.After(wait):
-					}
-				}
-			}
 			return resp, nil
 		}
 		resp.Body.Close()
@@ -412,7 +463,7 @@ func (r *RedditClient) fetchGallery(ctx context.Context, resolvedURL string) (*G
 		return nil, err
 	}
 
-	resp, err := doWithRetry(ctx, r.client, req)
+	resp, err := r.doWithRetry(ctx, req)
 	if err != nil {
 		return nil, err
 	}
