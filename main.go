@@ -5,11 +5,14 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 )
 
 func main() {
-	tmpl, err := template.ParseGlob("templates/*.html")
+	tmpl, err := template.New("").Funcs(template.FuncMap{
+		"hasSuffix": strings.HasSuffix,
+	}).ParseGlob("templates/*.html")
 	if err != nil {
 		slog.Error("Failed to parse templates", "error", err)
 		os.Exit(1)

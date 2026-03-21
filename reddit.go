@@ -80,6 +80,7 @@ type redditResponse []struct {
 type redditPost struct {
 	Title       string `json:"title"`
 	IsGallery   bool   `json:"is_gallery"`
+	IsVideo     bool   `json:"is_video"`
 	URL         string `json:"url_overridden_by_dest"`
 	GalleryData *struct {
 		Items []struct {
@@ -87,18 +88,33 @@ type redditPost struct {
 		} `json:"items"`
 	} `json:"gallery_data"`
 	MediaMetadata map[string]struct {
-		S struct{ U, Gif string } `json:"s"`
+		E string `json:"e"` // "Image", "AnimatedImage", "RedditVideo"
+		S struct {
+			U   string `json:"u"`   // static image URL
+			Gif string `json:"gif"` // animated GIF URL
+			Mp4 string `json:"mp4"` // video URL
+		} `json:"s"`
 	} `json:"media_metadata"`
+	Media *struct {
+		RedditVideo *struct {
+			FallbackURL string `json:"fallback_url"`
+		} `json:"reddit_video"`
+	} `json:"media"`
 	Preview *struct {
 		Images []struct {
 			Variants struct {
 				Gif *struct {
-					Source struct {
-						URL string `json:"url"`
-					} `json:"source"`
+					Source struct{ URL string `json:"url"` } `json:"source"`
 				} `json:"gif"`
+				Mp4 *struct {
+					Source struct{ URL string `json:"url"` } `json:"source"`
+				} `json:"mp4"`
 			} `json:"variants"`
+			Source struct{ URL string `json:"url"` } `json:"source"`
 		} `json:"images"`
+		RedditVideoPreview *struct {
+			FallbackURL string `json:"fallback_url"`
+		} `json:"reddit_video_preview"`
 	} `json:"preview"`
 }
 
@@ -279,30 +295,71 @@ func (r *RedditClient) StreamImage(ctx context.Context, urlStr string) (io.ReadC
 func extractImages(post redditPost) []string {
 	var images []string
 
+	// Multi-image gallery — items are ordered by GalleryData.Items.
 	if post.IsGallery && post.GalleryData != nil {
 		for _, item := range post.GalleryData.Items {
-			if media, ok := post.MediaMetadata[item.MediaID]; ok {
-				// Prefer animated GIF source, fall back to static image.
-				raw := media.S.Gif
-				if raw == "" {
-					raw = media.S.U
-				}
-				if raw != "" {
-					images = append(images, html.UnescapeString(raw))
-				}
+			media, ok := post.MediaMetadata[item.MediaID]
+			if !ok {
+				continue
 			}
+			// Prefer mp4 > gif > static image, in that order.
+			raw := media.S.Mp4
+			if raw == "" {
+				raw = media.S.Gif
+			}
+			if raw == "" {
+				raw = media.S.U
+			}
+			if raw != "" {
+				images = append(images, html.UnescapeString(raw))
+			}
+		}
+		if len(images) > 0 {
+			return images
 		}
 	}
 
-	if len(images) == 0 && post.Preview != nil {
+	// Single Reddit-hosted video (v.redd.it).
+	if post.IsVideo && post.Media != nil && post.Media.RedditVideo != nil {
+		if u := post.Media.RedditVideo.FallbackURL; u != "" {
+			// Strip query params — they add tracking and break extension detection.
+			if parsed, err := url.Parse(u); err == nil {
+				parsed.RawQuery = ""
+				return []string{parsed.String()}
+			}
+			return []string{u}
+		}
+	}
+
+	// Linked GIF/video via preview variants.
+	if post.Preview != nil {
+		// Reddit video preview (crossposted or linked video).
+		if post.Preview.RedditVideoPreview != nil {
+			if u := post.Preview.RedditVideoPreview.FallbackURL; u != "" {
+				if parsed, err := url.Parse(u); err == nil {
+					parsed.RawQuery = ""
+					return []string{parsed.String()}
+				}
+				return []string{u}
+			}
+		}
 		for _, img := range post.Preview.Images {
-			if img.Variants.Gif != nil {
+			// Prefer mp4 preview > gif preview > static source.
+			if img.Variants.Mp4 != nil {
+				images = append(images, html.UnescapeString(img.Variants.Mp4.Source.URL))
+			} else if img.Variants.Gif != nil {
 				images = append(images, html.UnescapeString(img.Variants.Gif.Source.URL))
+			} else if img.Source.URL != "" {
+				images = append(images, html.UnescapeString(img.Source.URL))
 			}
+		}
+		if len(images) > 0 {
+			return images
 		}
 	}
 
-	if len(images) == 0 && post.URL != "" {
+	// Plain image/gif/video link (e.g. i.redd.it, imgur, etc.).
+	if post.URL != "" {
 		images = append(images, html.UnescapeString(post.URL))
 	}
 

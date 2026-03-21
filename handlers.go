@@ -2,17 +2,16 @@ package main
 
 import (
 	"archive/zip"
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"html/template"
+	"io"
 	"log/slog"
 	"mime"
 	"net/http"
 	"net/url"
 	"path"
-	"strconv"
 	"strings"
 	"unicode"
 )
@@ -137,56 +136,62 @@ func (s *Server) handleDownloadZip(w http.ResponseWriter, r *http.Request) {
 
 	title := cleanFilename(r.FormValue("page_title"))
 
-	// Buffer the zip in memory so we can set headers only after confirming
-	// at least one image was written. Writing headers before the loop would
-	// send a 200 + Content-Type before we know if anything succeeded.
-	var buf bytes.Buffer
-	z := zip.NewWriter(&buf)
-	written := 0
-
-	for i, u := range urls {
-		if r.Context().Err() != nil {
-			slog.Info("Client disconnected, stopping zip stream")
-			z.Close()
-			return
-		}
-
-		body, ext, err := s.reddit.StreamImage(r.Context(), u)
+	// Prefetch the first successful image before writing headers so we can
+	// return a proper error if everything fails, without buffering the whole zip.
+	type prefetched struct {
+		body io.ReadCloser
+		ext  string
+		idx  int
+	}
+	var first *prefetched
+	firstIdx := 0
+	for firstIdx < len(urls) {
+		body, ext, err := s.reddit.StreamImage(r.Context(), urls[firstIdx])
 		if err != nil {
-			slog.Warn("Skipping image", "url", u, "error", err)
+			slog.Warn("Skipping image", "url", urls[firstIdx], "error", err)
+			firstIdx++
 			continue
 		}
-
-		f, err := z.Create(fmt.Sprintf("image_%03d%s", i+1, resolvedExt(ext, format)))
-		if err != nil {
-			body.Close()
-			slog.Error("Zip create error", "error", err)
-			continue
-		}
-
-		if err := streamImage(body, format, f); err != nil {
-			slog.Error("Zip write error", "url", u, "error", err)
-		}
-		body.Close()
-		written++
+		first = &prefetched{body, ext, firstIdx}
+		firstIdx++
+		break
 	}
-
-	if err := z.Close(); err != nil {
-		slog.Error("Zip close error", "error", err)
-		http.Error(w, "Failed to create zip", http.StatusInternalServerError)
-		return
-	}
-
-	if written == 0 {
+	if first == nil {
 		http.Error(w, "No images could be downloaded", http.StatusBadGateway)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/zip")
 	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": title + ".zip"}))
-	w.Header().Set("Content-Length", strconv.Itoa(buf.Len()))
-	if _, err := buf.WriteTo(w); err != nil && !isClientDisconnect(err) {
-		slog.Error("Zip send error", "error", err)
+
+	z := zip.NewWriter(w)
+	defer z.Close()
+
+	writeEntry := func(idx int, body io.ReadCloser, ext string) {
+		defer body.Close()
+		f, err := z.Create(fmt.Sprintf("image_%03d%s", idx+1, resolvedExt(ext, format)))
+		if err != nil {
+			slog.Error("Zip create error", "error", err)
+			return
+		}
+		if err := streamImage(body, format, f); err != nil && !isClientDisconnect(err) {
+			slog.Error("Zip write error", "url", urls[idx], "error", err)
+		}
+	}
+
+	writeEntry(first.idx, first.body, first.ext)
+
+	for i := firstIdx; i < len(urls); i++ {
+		if r.Context().Err() != nil {
+			slog.Info("Client disconnected, stopping zip stream")
+			return
+		}
+		body, ext, err := s.reddit.StreamImage(r.Context(), urls[i])
+		if err != nil {
+			slog.Warn("Skipping image", "url", urls[i], "error", err)
+			continue
+		}
+		writeEntry(i, body, ext)
 	}
 }
 

@@ -3,16 +3,15 @@ package main
 import (
 	"fmt"
 	"image"
-	"image/gif"
 	"image/jpeg"
 	"image/png"
 	"io"
-	"mime"
 	"net/url"
 	"path"
 	"strings"
 
 	_ "golang.org/x/image/webp"
+	_ "image/gif" // register gif decoder for image.Decode format detection
 )
 
 // isOriginalFormat reports whether the requested format means "keep as-is".
@@ -32,16 +31,29 @@ func resolvedExt(originalExt, format string) string {
 	return "." + format
 }
 
+// isVideoExt reports whether ext is a video format that cannot be transcoded.
+func isVideoExt(ext string) bool {
+	return ext == ".mp4" || ext == ".gifv"
+}
+
 // streamImage copies src to dst, converting the image format on-the-fly if needed.
+// Videos and GIFs are always copied as-is regardless of format — frame-accurate
+// transcoding requires ffmpeg which is not available here.
 func streamImage(src io.Reader, format string, dst io.Writer) error {
 	if isOriginalFormat(format) {
 		_, err := io.Copy(dst, src)
 		return err
 	}
 
-	img, _, err := image.Decode(src)
+	img, srcFmt, err := image.Decode(src)
 	if err != nil {
 		return fmt.Errorf("decode: %w", err)
+	}
+
+	// GIFs and videos cannot be losslessly round-tripped through image.Decode
+	// (only the first frame is decoded). Pass them through unchanged.
+	if srcFmt == "gif" {
+		return fmt.Errorf("gif conversion not supported: use original format")
 	}
 
 	switch format {
@@ -49,8 +61,6 @@ func streamImage(src io.Reader, format string, dst io.Writer) error {
 		return jpeg.Encode(dst, img, &jpeg.Options{Quality: 90})
 	case "png":
 		return png.Encode(dst, img)
-	case "gif":
-		return gif.Encode(dst, img, nil)
 	}
 	return fmt.Errorf("unsupported format: %s", format)
 }
@@ -62,14 +72,22 @@ func detectExtension(urlStr, contentType string) string {
 	if u, err := url.Parse(urlStr); err == nil {
 		ext := strings.ToLower(path.Ext(u.Path))
 		switch ext {
-		case ".png", ".gif", ".jpg", ".jpeg", ".webp":
+		case ".png", ".gif", ".jpg", ".jpeg", ".webp", ".mp4", ".gifv":
 			return ext
 		}
 	}
-	if contentType != "" {
-		if exts, _ := mime.ExtensionsByType(contentType); len(exts) > 0 {
-			return exts[0]
-		}
+	ct := strings.ToLower(strings.SplitN(contentType, ";", 2)[0])
+	switch ct {
+	case "image/jpeg":
+		return ".jpg"
+	case "image/png":
+		return ".png"
+	case "image/gif":
+		return ".gif"
+	case "image/webp":
+		return ".webp"
+	case "video/mp4":
+		return ".mp4"
 	}
 	return ".jpg"
 }

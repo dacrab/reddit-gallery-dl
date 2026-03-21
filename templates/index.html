@@ -81,6 +81,14 @@
         .image-card img { width: 100%; height: 100%; object-fit: cover; }
         .image-card input[type="checkbox"] { display: none; }
 
+        .media-badge {
+            position: absolute; top: 10px; left: 10px;
+            background: rgba(0,0,0,.6); color: #fff;
+            font-size: .75rem; padding: 2px 8px; border-radius: 20px;
+            display: flex; align-items: center; gap: 4px;
+            backdrop-filter: blur(4px); z-index: 1;
+        }
+
         .check-badge {
             position: absolute; top: 10px; right: 10px;
             width: 28px; height: 28px; border-radius: 50%;
@@ -213,10 +221,22 @@
 
             <div class="gallery-grid">
                 {{ range $i, $url := .Images }}
+                {{ $isVideo := hasSuffix $url ".mp4" }}
+                {{ $isGif   := hasSuffix $url ".gif" }}
                 <div class="image-card selected" onclick="toggleSelection(this)">
                     <div class="check-badge"><i class="bi bi-check-lg"></i></div>
                     <input type="checkbox" name="image_urls" value="{{ $url }}" checked>
+                    {{ if $isVideo }}
+                    <video src="{{ $url }}" autoplay loop muted playsinline
+                           style="width:100%;height:100%;object-fit:cover;"></video>
+                    {{ else }}
                     <img src="{{ $url }}" alt="Image {{ $i }}" loading="lazy">
+                    {{ end }}
+                    {{ if $isVideo }}
+                    <div class="media-badge"><i class="bi bi-play-circle-fill"></i></div>
+                    {{ else if $isGif }}
+                    <div class="media-badge"><i class="bi bi-image-fill"></i> GIF</div>
+                    {{ end }}
                     <div class="card-actions" onclick="event.stopPropagation()">
                         <a href="{{ $url }}" target="_blank" rel="noopener"
                            class="btn btn-light btn-icon rounded-circle shadow-sm" title="View full size">
@@ -237,8 +257,8 @@
                     class="form-select border rounded-pill bg-body-tertiary py-1 ps-3"
                     style="width:auto;cursor:pointer;">
                 <option value="original">Original</option>
-                <option value="jpg">JPG</option>
-                <option value="png">PNG</option>
+                <option value="jpg" class="img-only">JPG</option>
+                <option value="png" class="img-only">PNG</option>
             </select>
             <button type="submit" id="downloadBtn"
                     class="btn btn-primary rounded-pill px-4 fw-bold d-flex align-items-center gap-2 text-nowrap">
@@ -314,14 +334,24 @@ function syncBar() {
     if (countSpan)   countSpan.textContent = n;
     if (downloadBtn) downloadBtn.disabled = n === 0;
     if (actionBar)   actionBar.classList.toggle('visible', n > 0);
+    syncFormat();
 }
 
-// Format label
+// Format label + disable conversion when only videos are selected
 const fmt = document.getElementById('formatSelect');
-if (fmt) fmt.addEventListener('change', function() {
+function syncFormat() {
+    if (!fmt) return;
+    const checked = [...document.querySelectorAll('input[name="image_urls"]:checked')];
+    const allVideo = checked.length > 0 && checked.every(cb => cb.value.endsWith('.mp4'));
+    fmt.querySelectorAll('.img-only').forEach(o => o.disabled = allVideo);
+    if (allVideo && fmt.value !== 'original') { fmt.value = 'original'; }
     document.getElementById('downloadText').textContent =
-        this.value === 'original' ? 'Download' : `Download ${this.value.toUpperCase()}`;
-});
+        fmt.value === 'original' ? 'Download' : `Download ${fmt.value.toUpperCase()}`;
+}
+if (fmt) {
+    fmt.addEventListener('change', syncFormat);
+    syncFormat();
+}
 </script>
 </body>
 </html>
