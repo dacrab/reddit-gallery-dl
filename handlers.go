@@ -72,6 +72,8 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 			alert = &Alert{Message: "Post not found. It might be deleted or private.", Type: "warning"}
 		case errors.Is(err, ErrNoImages):
 			alert = &Alert{Message: "This post exists but has no images.", Type: "info"}
+		case errors.Is(err, ErrRateLimited):
+			alert = &Alert{Message: "Reddit is rate limiting requests right now. Please wait a moment and try again.", Type: "warning"}
 		}
 		s.render(w, TemplateData{URL: urlStr, Alert: alert})
 		return

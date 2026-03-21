@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -18,12 +19,15 @@ const (
 	// userAgent follows Reddit's recommended format: <platform>:<app>:<version>.
 	userAgent      = "golang:reddit-gallery-dl:v1.0.0 (by /u/reddit-gallery-dl)"
 	defaultTimeout = 120 * time.Second
+	maxRetries     = 3
+	baseBackoff    = time.Second
 )
 
 var (
 	ErrInvalidURL   = errors.New("invalid reddit url")
 	ErrPostNotFound = errors.New("post not found or deleted")
 	ErrNoImages     = errors.New("no images found in post")
+	ErrRateLimited  = errors.New("reddit is rate limiting requests")
 )
 
 // newTransport returns an HTTP/1.1 transport. Reddit's CDN applies stricter
@@ -98,6 +102,48 @@ type redditPost struct {
 	} `json:"preview"`
 }
 
+// doWithRetry executes req using client, retrying up to maxRetries times on
+// HTTP 429 responses. It honours Reddit's Retry-After header when present,
+// otherwise it falls back to exponential backoff (1s, 2s, 4s, …).
+// The caller is responsible for closing the response body on success.
+func doWithRetry(ctx context.Context, client *http.Client, req *http.Request) (*http.Response, error) {
+	backoff := baseBackoff
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		// Clone the request so the same *Request can be reused after the body
+		// has been drained (GET requests have no body, so this is safe).
+		cloned := req.Clone(ctx)
+		resp, err := client.Do(cloned)
+		if err != nil {
+			return nil, err
+		}
+
+		if resp.StatusCode != http.StatusTooManyRequests {
+			return resp, nil
+		}
+		resp.Body.Close()
+
+		if attempt == maxRetries {
+			break
+		}
+
+		// Respect Retry-After if Reddit tells us how long to wait.
+		wait := backoff
+		if ra := resp.Header.Get("Retry-After"); ra != "" {
+			if secs, err := strconv.Atoi(ra); err == nil && secs > 0 {
+				wait = time.Duration(secs) * time.Second
+			}
+		}
+		backoff *= 2
+
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(wait):
+		}
+	}
+	return nil, ErrRateLimited
+}
+
 // newRequest builds an authenticated-style request with the standard headers
 // Reddit expects from API clients.
 func newRequest(ctx context.Context, method, targetURL string) (*http.Request, error) {
@@ -123,7 +169,7 @@ func (r *RedditClient) FetchGallery(ctx context.Context, postURL string) (*Galle
 		return nil, err
 	}
 
-	resp, err := r.client.Do(req)
+	resp, err := doWithRetry(ctx, r.client, req)
 	if err != nil {
 		return nil, err
 	}
