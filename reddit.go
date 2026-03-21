@@ -30,12 +30,17 @@ var (
 	ErrRateLimited  = errors.New("reddit is rate limiting requests")
 )
 
-// newTransport returns an HTTP/1.1 transport. Reddit's CDN applies stricter
-// rate limiting to HTTP/2 connections from non-browser clients.
+// newTransport returns a tuned HTTP/1.1 transport. Reddit's CDN applies
+// stricter rate limiting to HTTP/2 connections from non-browser clients.
+// Connection pool is kept small since all requests go to the same two hosts
+// (www.reddit.com and i.redd.it / preview.redd.it).
 func newTransport() *http.Transport {
 	return &http.Transport{
-		TLSClientConfig:   &tls.Config{MinVersion: tls.VersionTLS12},
-		ForceAttemptHTTP2: false,
+		TLSClientConfig:     &tls.Config{MinVersion: tls.VersionTLS12},
+		ForceAttemptHTTP2:   false,
+		MaxIdleConns:        20,
+		MaxIdleConnsPerHost: 5,
+		IdleConnTimeout:     60 * time.Second,
 	}
 }
 
@@ -104,7 +109,7 @@ type redditPost struct {
 
 // doWithRetry executes req using client, retrying up to maxRetries times on
 // HTTP 429 responses. It honours Reddit's Retry-After header when present,
-// otherwise it falls back to exponential backoff (1s, 2s, 4s, …).
+// otherwise it falls back to exponential backoff (5s, 10s, 20s, …).
 // The caller is responsible for closing the response body on success.
 func doWithRetry(ctx context.Context, client *http.Client, req *http.Request) (*http.Response, error) {
 	backoff := baseBackoff
