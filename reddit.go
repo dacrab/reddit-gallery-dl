@@ -193,6 +193,8 @@ type redditPost struct {
 // doWithRetry executes req using client, retrying up to maxRetries times on
 // HTTP 429 responses. It honours Reddit's Retry-After header when present,
 // otherwise it falls back to exponential backoff (2s, 4s, 8s, …).
+// It also reads x-ratelimit-remaining and proactively sleeps when the quota
+// is nearly exhausted to avoid triggering a 429 in the first place.
 // The caller is responsible for closing the response body on success.
 func doWithRetry(ctx context.Context, client *http.Client, req *http.Request) (*http.Response, error) {
 	backoff := baseBackoff
@@ -203,6 +205,29 @@ func doWithRetry(ctx context.Context, client *http.Client, req *http.Request) (*
 		}
 
 		if resp.StatusCode != http.StatusTooManyRequests {
+			// Proactively throttle if quota is nearly exhausted.
+			if remaining := resp.Header.Get("X-Ratelimit-Remaining"); remaining != "" {
+				if r, err := strconv.ParseFloat(remaining, 64); err == nil && r < 5 {
+					resetSecs := 60.0
+					if rs := resp.Header.Get("X-Ratelimit-Reset"); rs != "" {
+						if s, err := strconv.ParseFloat(rs, 64); err == nil && s > 0 {
+							resetSecs = s
+						}
+					}
+					// Spread remaining requests evenly across the reset window.
+					wait := time.Duration(resetSecs/max(r, 1)*float64(time.Second)) / 2
+					if wait > 10*time.Second {
+						wait = 10 * time.Second
+					}
+					slog.Warn("Reddit quota low, throttling", "remaining", r, "reset_in", resetSecs, "wait", wait.Round(time.Millisecond))
+					select {
+					case <-ctx.Done():
+						resp.Body.Close()
+						return nil, ctx.Err()
+					case <-time.After(wait):
+					}
+				}
+			}
 			return resp, nil
 		}
 		resp.Body.Close()
