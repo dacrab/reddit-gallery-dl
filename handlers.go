@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"path"
 	"strings"
+	"syscall"
 	"unicode"
 )
 
@@ -37,8 +38,13 @@ func (s *Server) Routes() *http.ServeMux {
 }
 
 // render executes the named template, logging any error instead of silently dropping it.
+// Broken pipe errors are logged at debug level — they just mean the client disconnected.
 func (s *Server) render(w http.ResponseWriter, data TemplateData) {
 	if err := s.tmpl.ExecuteTemplate(w, "index.html", data); err != nil {
+		if errors.Is(err, syscall.EPIPE) {
+			slog.Debug("Client disconnected before response could be written")
+			return
+		}
 		slog.Error("Template render failed", "error", err)
 	}
 }

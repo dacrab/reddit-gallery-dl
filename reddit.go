@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -20,7 +21,7 @@ const (
 	userAgent      = "golang:reddit-gallery-dl:v1.0.0 (by /u/reddit-gallery-dl)"
 	defaultTimeout = 120 * time.Second
 	maxRetries     = 3
-	baseBackoff    = 5 * time.Second
+	baseBackoff    = 2 * time.Second
 )
 
 var (
@@ -140,12 +141,15 @@ func doWithRetry(ctx context.Context, client *http.Client, req *http.Request) (*
 		}
 		backoff *= 2
 
+		slog.Warn("Reddit rate limited, retrying", "attempt", attempt+1, "wait", wait)
+
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		case <-time.After(wait):
 		}
 	}
+	slog.Warn("Reddit rate limited, all retries exhausted")
 	return nil, ErrRateLimited
 }
 
