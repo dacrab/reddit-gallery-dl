@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"strconv"
 	"strings"
 	"unicode"
 )
@@ -51,9 +52,6 @@ func (s *Server) render(w http.ResponseWriter, data TemplateData) {
 // isClientDisconnect reports whether err is a broken pipe or connection reset,
 // which happens when the client closes the connection before we finish writing.
 func isClientDisconnect(err error) bool {
-	if err == nil {
-		return false
-	}
 	s := err.Error()
 	return strings.Contains(s, "broken pipe") || strings.Contains(s, "connection reset by peer")
 }
@@ -186,11 +184,12 @@ func (s *Server) handleDownloadZip(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/zip")
 	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": title + ".zip"}))
-	w.Header().Set("Content-Length", fmt.Sprintf("%d", buf.Len()))
+	w.Header().Set("Content-Length", strconv.Itoa(buf.Len()))
 	if _, err := buf.WriteTo(w); err != nil && !isClientDisconnect(err) {
 		slog.Error("Zip send error", "error", err)
 	}
 }
+
 
 func (s *Server) serveSingleImage(w http.ResponseWriter, ctx context.Context, rawURL, format string) {
 	body, ext, err := s.reddit.StreamImage(ctx, rawURL)
@@ -201,18 +200,15 @@ func (s *Server) serveSingleImage(w http.ResponseWriter, ctx context.Context, ra
 	defer body.Close()
 
 	finalExt := resolvedExt(ext, format)
-
 	filename := "image" + finalExt
 	if u, _ := url.Parse(rawURL); u != nil {
 		if base := path.Base(u.Path); strings.Contains(base, ".") {
 			filename = strings.TrimSuffix(base, path.Ext(base)) + finalExt
 		}
 	}
-
 	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": filename}))
 	w.Header().Set("Content-Type", mime.TypeByExtension(finalExt))
-
-	if err := streamImage(body, format, w); err != nil {
+	if err := streamImage(body, format, w); err != nil && !isClientDisconnect(err) {
 		slog.Error("Error streaming single image", "error", err)
 	}
 }

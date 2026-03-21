@@ -31,35 +31,29 @@ var (
 	ErrRateLimited  = errors.New("reddit is rate limiting requests")
 )
 
-// newTransport returns a shared, tuned HTTP/1.1 transport. Reddit's CDN
-// applies stricter rate limiting to HTTP/2 connections from non-browser
-// clients. A single transport is shared across all clients so they reuse
-// the same connection pool for the same handful of hosts.
-func newTransport() *http.Transport {
-	return &http.Transport{
-		TLSClientConfig:     &tls.Config{MinVersion: tls.VersionTLS12},
-		ForceAttemptHTTP2:   false,
-		MaxIdleConns:        20,
-		MaxIdleConnsPerHost: 5,
-		IdleConnTimeout:     60 * time.Second,
-	}
-}
-
 type RedditClient struct {
 	client           *http.Client
 	noRedirectClient *http.Client
 }
 
 func NewRedditClient() *RedditClient {
-	transport := newTransport()
+	// Single shared transport — both clients talk to the same Reddit hosts
+	// so sharing the connection pool avoids redundant TLS handshakes.
+	// HTTP/2 is disabled: Reddit's CDN rate-limits non-browser HTTP/2 clients.
+	transport := &http.Transport{
+		TLSClientConfig:     &tls.Config{MinVersion: tls.VersionTLS12},
+		ForceAttemptHTTP2:   false,
+		MaxIdleConns:        20,
+		MaxIdleConnsPerHost: 5,
+		IdleConnTimeout:     60 * time.Second,
+	}
 	return &RedditClient{
 		client: &http.Client{
 			Timeout:   defaultTimeout,
 			Transport: transport,
 		},
-		// noRedirectClient shares the transport but does not follow redirects.
-		// Used for share links (/r/<sub>/s/<id>) — we only need the Location
-		// header from the first response, not the destination page.
+		// noRedirectClient is used for share links (/r/<sub>/s/<id>).
+		// We only need the Location header — not the destination page.
 		noRedirectClient: &http.Client{
 			Timeout:   defaultTimeout,
 			Transport: transport,
@@ -73,7 +67,6 @@ func NewRedditClient() *RedditClient {
 type Gallery struct {
 	Title  string
 	Images []string
-	URL    string
 }
 
 type redditResponse []struct {
@@ -116,10 +109,7 @@ type redditPost struct {
 func doWithRetry(ctx context.Context, client *http.Client, req *http.Request) (*http.Response, error) {
 	backoff := baseBackoff
 	for attempt := 0; attempt <= maxRetries; attempt++ {
-		// Clone the request so the same *Request can be reused after the body
-		// has been drained (GET requests have no body, so this is safe).
-		cloned := req.Clone(ctx)
-		resp, err := client.Do(cloned)
+		resp, err := client.Do(req)
 		if err != nil {
 			return nil, err
 		}
@@ -159,7 +149,7 @@ func doWithRetry(ctx context.Context, client *http.Client, req *http.Request) (*
 func newRequest(ctx context.Context, method, targetURL string) (*http.Request, error) {
 	req, err := http.NewRequestWithContext(ctx, method, targetURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("request creation failed: %w", err)
+		return nil, err
 	}
 	req.Header.Set("User-Agent", userAgent)
 	req.AddCookie(&http.Cookie{Name: "over18", Value: "1"})
@@ -204,7 +194,7 @@ func (r *RedditClient) FetchGallery(ctx context.Context, postURL string) (*Galle
 		return nil, ErrNoImages
 	}
 
-	return &Gallery{Title: post.Title, Images: images, URL: postURL}, nil
+	return &Gallery{Title: post.Title, Images: images}, nil
 }
 
 // resolveURL validates and normalises a Reddit post URL.
