@@ -136,7 +136,7 @@ func (s *Server) handleDownloadSingle(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Missing URL", http.StatusBadRequest)
 		return
 	}
-	s.serveSingleImage(w, r.Context(), rawURL, r.URL.Query().Get("format"))
+	s.serveSingleImage(w, r.Context(), rawURL)
 }
 
 func (s *Server) handleDownloadZip(w http.ResponseWriter, r *http.Request) {
@@ -150,14 +150,13 @@ func (s *Server) handleDownloadZip(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	urls := r.Form["image_urls"]
-	format := r.FormValue("format")
 	if len(urls) == 0 {
 		http.Error(w, "No images selected", http.StatusBadRequest)
 		return
 	}
 
 	if len(urls) == 1 {
-		s.serveSingleImage(w, r.Context(), urls[0], format)
+		s.serveSingleImage(w, r.Context(), urls[0])
 		return
 	}
 
@@ -192,12 +191,12 @@ func (s *Server) handleDownloadZip(w http.ResponseWriter, r *http.Request) {
 
 	writeEntry := func(idx int, body io.ReadCloser, ext string) {
 		defer body.Close()
-		f, err := z.Create(fmt.Sprintf("image_%03d%s", idx+1, resolvedExt(ext, format)))
+		f, err := z.Create(fmt.Sprintf("image_%03d%s", idx+1, ext))
 		if err != nil {
 			slog.Error("Zip create error", "error", err)
 			return
 		}
-		if err := streamImage(body, format, f); err != nil && !isClientDisconnect(err) {
+		if _, err := io.Copy(f, body); err != nil && !isClientDisconnect(err) {
 			slog.Error("Zip write error", "url", urls[idx], "error", err)
 		}
 	}
@@ -219,7 +218,7 @@ func (s *Server) handleDownloadZip(w http.ResponseWriter, r *http.Request) {
 }
 
 
-func (s *Server) serveSingleImage(w http.ResponseWriter, ctx context.Context, rawURL, format string) {
+func (s *Server) serveSingleImage(w http.ResponseWriter, ctx context.Context, rawURL string) {
 	body, ext, err := s.reddit.StreamImage(ctx, rawURL)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
@@ -227,16 +226,15 @@ func (s *Server) serveSingleImage(w http.ResponseWriter, ctx context.Context, ra
 	}
 	defer body.Close()
 
-	finalExt := resolvedExt(ext, format)
-	filename := "image" + finalExt
+	filename := "image" + ext
 	if u, _ := url.Parse(rawURL); u != nil {
 		if base := path.Base(u.Path); strings.Contains(base, ".") {
-			filename = strings.TrimSuffix(base, path.Ext(base)) + finalExt
+			filename = strings.TrimSuffix(base, path.Ext(base)) + ext
 		}
 	}
 	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": filename}))
-	w.Header().Set("Content-Type", mime.TypeByExtension(finalExt))
-	if err := streamImage(body, format, w); err != nil && !isClientDisconnect(err) {
+	w.Header().Set("Content-Type", mime.TypeByExtension(ext))
+	if _, err := io.Copy(w, body); err != nil && !isClientDisconnect(err) {
 		slog.Error("Error streaming single image", "error", err)
 	}
 }

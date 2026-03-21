@@ -141,10 +141,6 @@ nav .spacer { flex:1; }
 }
 .action-bar.show { transform:translateX(-50%) translateY(0); }
 .sel-count { font-weight:700; font-size:.95rem; padding-right:.75rem; border-right:1px solid var(--border); }
-.fmt-select {
-    background:var(--bg3); border:1px solid var(--border); color:var(--text);
-    border-radius:20px; padding:.25rem .85rem; font-size:.9rem; cursor:pointer; outline:none;
-}
 .dl-btn {
     background:var(--accent); border:none; border-radius:20px;
     padding:.4rem 1.1rem; color:#fff; font-weight:700; font-size:.9rem;
@@ -270,14 +266,9 @@ nav .spacer { flex:1; }
 
     <div class="action-bar show" id="actionBar">
       <span class="sel-count" id="selCount">{{ len .Images }}</span>
-      <select name="format" id="fmtSel" class="fmt-select">
-        <option value="original">Original</option>
-        <option value="jpg" class="img-only">JPG</option>
-        <option value="png" class="img-only">PNG</option>
-      </select>
       <button type="submit" class="dl-btn" id="dlBtn">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-        <span id="dlText">Download</span>
+        Download
       </button>
     </div>
   </form>
@@ -334,7 +325,6 @@ async function doPaste() {
 const actionBar = document.getElementById('actionBar');
 const selCount  = document.getElementById('selCount');
 const dlBtn     = document.getElementById('dlBtn');
-const fmtSel    = document.getElementById('fmtSel');
 
 function toggleSel(card) {
     const cb = card.querySelector('input');
@@ -351,14 +341,7 @@ function sync() {
     if (selCount) selCount.textContent = n;
     if (dlBtn)    dlBtn.disabled = n === 0;
     if (actionBar) actionBar.classList.toggle('show', n > 0);
-    if (!fmtSel) return;
-    const allVideo = n > 0 && checked.every(cb => cb.value.endsWith('.mp4'));
-    fmtSel.querySelectorAll('.img-only').forEach(o => o.disabled = allVideo);
-    if (allVideo) fmtSel.value = 'original';
-    const v = fmtSel.value;
-    document.getElementById('dlText').textContent = v === 'original' ? 'Download' : 'Download ' + v.toUpperCase();
 }
-if (fmtSel) fmtSel.addEventListener('change', sync);
 </script>
 </body>
 </html>
