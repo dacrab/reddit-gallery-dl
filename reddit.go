@@ -20,7 +20,7 @@ const (
 	userAgent      = "golang:reddit-gallery-dl:v1.0.0 (by /u/reddit-gallery-dl)"
 	defaultTimeout = 120 * time.Second
 	maxRetries     = 3
-	baseBackoff    = time.Second
+	baseBackoff    = 5 * time.Second
 )
 
 var (
