@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"path"
 	"strings"
+	"syscall"
 	"unicode"
 )
 
@@ -36,9 +37,9 @@ func (s *Server) Routes() *http.ServeMux {
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		static.ServeHTTP(w, r)
 	}))
+	csrf := http.NewCrossOriginProtection()
 	mux.HandleFunc("/", withGzip(s.handleIndex))
-	mux.HandleFunc("/download-zip", s.handleDownloadZip)
-	mux.HandleFunc("/download-single", s.handleDownloadSingle)
+	mux.Handle("/download-zip", csrf.Handler(http.HandlerFunc(s.handleDownloadZip)))
 	return mux
 }
 
@@ -64,8 +65,7 @@ func withGzip(h http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// render executes the named template, logging any error instead of silently dropping it.
-// Broken pipe / connection reset errors are ignored — they just mean the client left.
+// render executes the named template, logging any error.
 func (s *Server) render(w http.ResponseWriter, data TemplateData) {
 	if err := s.tmpl.ExecuteTemplate(w, "index.html", data); err != nil {
 		if isClientDisconnect(err) {
@@ -75,11 +75,9 @@ func (s *Server) render(w http.ResponseWriter, data TemplateData) {
 	}
 }
 
-// isClientDisconnect reports whether err is a broken pipe or connection reset,
-// which happens when the client closes the connection before we finish writing.
+// isClientDisconnect reports whether the client closed the connection.
 func isClientDisconnect(err error) bool {
-	s := err.Error()
-	return strings.Contains(s, "broken pipe") || strings.Contains(s, "connection reset by peer")
+	return errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ECONNRESET)
 }
 
 type Alert struct {
@@ -107,16 +105,18 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	urlStr := r.FormValue("url")
 	gallery, err := s.reddit.FetchGallery(r.Context(), urlStr)
 	if err != nil {
-		alert := &Alert{Message: err.Error(), Type: "danger"}
+		var alert *Alert
 		switch {
 		case errors.Is(err, ErrInvalidURL):
-			alert = &Alert{Message: "That doesn't look like a valid Reddit link.", Type: "warning"}
+			alert = &Alert{"That doesn't look like a valid Reddit link.", "warning"}
 		case errors.Is(err, ErrPostNotFound):
-			alert = &Alert{Message: "Post not found. It might be deleted or private.", Type: "warning"}
+			alert = &Alert{"Post not found. It might be deleted or private.", "warning"}
 		case errors.Is(err, ErrNoImages):
-			alert = &Alert{Message: "This post exists but has no images.", Type: "info"}
+			alert = &Alert{"This post exists but has no images.", "info"}
 		case errors.Is(err, ErrRateLimited):
-			alert = &Alert{Message: "Reddit is rate limiting requests right now. Please wait a moment and try again.", Type: "warning"}
+			alert = &Alert{"Reddit is rate limiting requests right now. Please wait a moment and try again.", "warning"}
+		default:
+			alert = &Alert{err.Error(), "danger"}
 		}
 		s.render(w, TemplateData{URL: urlStr, Alert: alert})
 		return
@@ -126,17 +126,8 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		Title:  gallery.Title,
 		Images: gallery.Images,
 		URL:    urlStr,
-		Alert:  &Alert{Message: fmt.Sprintf("Loaded %d images!", len(gallery.Images)), Type: "success"},
+		Alert:  &Alert{fmt.Sprintf("Loaded %d images!", len(gallery.Images)), "success"},
 	})
-}
-
-func (s *Server) handleDownloadSingle(w http.ResponseWriter, r *http.Request) {
-	rawURL := r.URL.Query().Get("url")
-	if rawURL == "" {
-		http.Error(w, "Missing URL", http.StatusBadRequest)
-		return
-	}
-	s.serveSingleImage(w, r.Context(), rawURL)
 }
 
 func (s *Server) handleDownloadZip(w http.ResponseWriter, r *http.Request) {
@@ -216,7 +207,6 @@ func (s *Server) handleDownloadZip(w http.ResponseWriter, r *http.Request) {
 		writeEntry(i, body, ext)
 	}
 }
-
 
 func (s *Server) serveSingleImage(w http.ResponseWriter, ctx context.Context, rawURL string) {
 	body, ext, err := s.reddit.StreamImage(ctx, rawURL)

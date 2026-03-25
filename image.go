@@ -13,11 +13,12 @@ func detectExtension(urlStr, contentType string) string {
 	if u, err := url.Parse(urlStr); err == nil {
 		ext := strings.ToLower(path.Ext(u.Path))
 		switch ext {
-		case ".png", ".gif", ".jpg", ".jpeg", ".webp", ".mp4", ".gifv":
+		case ".png", ".gif", ".jpg", ".jpeg", ".webp", ".mp4":
 			return ext
 		}
 	}
-	ct := strings.ToLower(strings.SplitN(contentType, ";", 2)[0])
+	ct, _, _ := strings.Cut(contentType, ";")
+	ct = strings.ToLower(strings.TrimSpace(ct))
 	switch ct {
 	case "image/jpeg":
 		return ".jpg"
