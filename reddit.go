@@ -29,53 +29,43 @@ var (
 	ErrRateLimited  = errors.New("reddit is rate limiting requests")
 )
 
-// rateLimiter tracks Reddit's x-ratelimit-* headers and calculates the optimal
-// delay before each request (PRAW algorithm), capped at 2 s to avoid hangs.
+// rateLimiter serialises outgoing Reddit API requests using PRAW's algorithm.
+// The mutex is held across the sleep so concurrent callers queue up rather than
+// all firing at once.
 type rateLimiter struct {
-	mu          sync.Mutex
-	nextRequest time.Time
+	mu sync.Mutex
 }
 
-func (rl *rateLimiter) delay(ctx context.Context) error {
+func (rl *rateLimiter) wait(ctx context.Context, h http.Header) error {
 	rl.mu.Lock()
-	wait := time.Until(rl.nextRequest)
-	rl.mu.Unlock()
-	if wait <= 0 {
-		return nil
-	}
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-time.After(wait):
-		return nil
-	}
-}
+	defer rl.mu.Unlock()
 
-func (rl *rateLimiter) update(h http.Header) {
 	remaining := h.Get("X-Ratelimit-Remaining")
 	if remaining == "" {
-		return
+		return nil
 	}
 	r, _ := strconv.ParseFloat(remaining, 64)
 	u, _ := strconv.ParseFloat(h.Get("X-Ratelimit-Used"), 64)
 	s, _ := strconv.ParseFloat(h.Get("X-Ratelimit-Reset"), 64)
 
-	rl.mu.Lock()
-	defer rl.mu.Unlock()
-
+	var sleep float64
 	if r <= 0 {
-		// Exhausted — wait for reset, but no longer than 2 s to avoid hanging.
-		wait := time.Duration(min(max(s, 1), 2)) * time.Second
-		rl.nextRequest = time.Now().Add(wait)
-		slog.Warn("Reddit rate limit exhausted", "wait", wait)
-		return
+		sleep = min(max(s, 1), 2)
+		slog.Warn("Reddit rate limit exhausted, waiting", "wait_s", sleep)
+	} else {
+		// PRAW algorithm: spread remaining requests across the reset window.
+		ideal := s - s*(1-u/(r+u))
+		sleep = min(max(ideal, 0), 2.0)
 	}
-
-	// Spread remaining requests evenly across the reset window (PRAW algorithm),
-	// capped at 2 s so a single fetch never stalls visibly.
-	idealSleep := s - s*(1-u/(r+u))
-	sleep := min(max(idealSleep, 0), 2.0)
-	rl.nextRequest = time.Now().Add(time.Duration(sleep * float64(time.Second)))
+	if sleep <= 0 {
+		return nil
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(time.Duration(sleep * float64(time.Second))):
+		return nil
+	}
 }
 
 type RedditClient struct {
@@ -181,12 +171,11 @@ func apiRequest(ctx context.Context, targetURL string) (*http.Request, error) {
 	return req, nil
 }
 
-// do executes a request with PRAW-style rate limiting and one retry on HTTP 429.
+// do executes an API request with PRAW-style rate limiting and one retry on 429.
+// Rate limit headers are consumed *after* a successful response so the mutex
+// serialises concurrent callers and prevents burst requests.
 func (r *RedditClient) do(ctx context.Context, targetURL string) (*http.Response, error) {
 	for attempt := range 2 {
-		if err := r.rl.delay(ctx); err != nil {
-			return nil, err
-		}
 		req, err := apiRequest(ctx, targetURL)
 		if err != nil {
 			return nil, err
@@ -195,8 +184,13 @@ func (r *RedditClient) do(ctx context.Context, targetURL string) (*http.Response
 		if err != nil {
 			return nil, err
 		}
-		r.rl.update(resp.Header)
 		if resp.StatusCode != http.StatusTooManyRequests {
+			// Good response — apply rate limit delay before returning so the
+			// next caller is held off appropriately.
+			if err := r.rl.wait(ctx, resp.Header); err != nil {
+				resp.Body.Close()
+				return nil, err
+			}
 			return resp, nil
 		}
 		resp.Body.Close()
