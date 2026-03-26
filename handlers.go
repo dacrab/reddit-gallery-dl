@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/zip"
+	"bufio"
 	"compress/gzip"
 	"context"
 	"errors"
@@ -14,6 +15,7 @@ import (
 	"net/url"
 	"path"
 	"strings"
+	"sync"
 	"syscall"
 	"unicode"
 )
@@ -65,24 +67,27 @@ func withGzip(h http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// render executes the named template, logging any error.
+// render executes the index template, silently ignoring client disconnects.
 func (s *Server) render(w http.ResponseWriter, data TemplateData) {
-	if err := s.tmpl.ExecuteTemplate(w, "index.html", data); err != nil {
-		if isClientDisconnect(err) {
-			return
-		}
+	if err := s.tmpl.ExecuteTemplate(w, "index.html", data); err != nil && !isClientDisconnect(err) {
 		slog.Error("Template render failed", "error", err)
 	}
 }
 
-// isClientDisconnect reports whether the client closed the connection.
+// isClientDisconnect reports whether the error is a normal client disconnect.
+// Net stack errors don't always unwrap to syscall errors, so we also check the
+// message string as a fallback.
 func isClientDisconnect(err error) bool {
-	return errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ECONNRESET)
+	if errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ECONNRESET) {
+		return true
+	}
+	s := err.Error()
+	return strings.Contains(s, "broken pipe") || strings.Contains(s, "connection reset by peer")
 }
 
 type Alert struct {
 	Message string
-	Type    string
+	Type    string // success | info | warning | danger
 }
 
 type TemplateData struct {
@@ -105,20 +110,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	urlStr := r.FormValue("url")
 	gallery, err := s.reddit.FetchGallery(r.Context(), urlStr)
 	if err != nil {
-		var alert *Alert
-		switch {
-		case errors.Is(err, ErrInvalidURL):
-			alert = &Alert{"That doesn't look like a valid Reddit link.", "warning"}
-		case errors.Is(err, ErrPostNotFound):
-			alert = &Alert{"Post not found. It might be deleted or private.", "warning"}
-		case errors.Is(err, ErrNoImages):
-			alert = &Alert{"This post exists but has no images.", "info"}
-		case errors.Is(err, ErrRateLimited):
-			alert = &Alert{"Reddit is rate limiting requests right now. Please wait a moment and try again.", "warning"}
-		default:
-			alert = &Alert{err.Error(), "danger"}
-		}
-		s.render(w, TemplateData{URL: urlStr, Alert: alert})
+		s.render(w, TemplateData{URL: urlStr, Alert: alertForError(err)})
 		return
 	}
 
@@ -130,12 +122,32 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func alertForError(err error) *Alert {
+	switch {
+	case errors.Is(err, ErrInvalidURL):
+		return &Alert{"That doesn't look like a valid Reddit link.", "warning"}
+	case errors.Is(err, ErrPostNotFound):
+		return &Alert{"Post not found. It might be deleted or private.", "warning"}
+	case errors.Is(err, ErrNoImages):
+		return &Alert{"This post exists but has no images.", "info"}
+	case errors.Is(err, ErrRateLimited):
+		return &Alert{"Reddit is rate limiting requests right now. Please wait a moment and try again.", "warning"}
+	default:
+		return &Alert{err.Error(), "danger"}
+	}
+}
+
+// prefetched holds a fully-downloaded image ready to be written into the zip.
+type prefetched struct {
+	ext  string
+	data []byte
+}
+
 func (s *Server) handleDownloadZip(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
-
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "Invalid form data", http.StatusBadRequest)
 		return
@@ -145,31 +157,48 @@ func (s *Server) handleDownloadZip(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "No images selected", http.StatusBadRequest)
 		return
 	}
-
 	if len(urls) == 1 {
 		s.serveSingleImage(w, r.Context(), urls[0])
 		return
 	}
 
 	title := cleanFilename(r.FormValue("page_title"))
+	ctx := r.Context()
 
-	// Fetch the first image before writing headers — lets us return a real
-	// error if everything fails instead of sending a corrupt empty zip.
-	var firstBody io.ReadCloser
-	var firstExt string
-	firstIdx := 0
-	for firstIdx < len(urls) {
-		body, ext, err := s.reddit.StreamImage(r.Context(), urls[firstIdx])
-		if err != nil {
-			slog.Warn("Skipping image", "url", urls[firstIdx], "error", err)
-			firstIdx++
-			continue
-		}
-		firstBody, firstExt = body, ext
-		firstIdx++
-		break
+	// Fetch all images concurrently (Reddit caps galleries at 20 images).
+	// We buffer into memory so we can return a proper HTTP error if everything
+	// fails, and so zip entries are written sequentially without stalling on I/O.
+	results := make([]prefetched, len(urls))
+	var wg sync.WaitGroup
+	for i, u := range urls {
+		wg.Add(1)
+		go func(idx int, imgURL string) {
+			defer wg.Done()
+			body, ext, err := s.reddit.StreamImage(ctx, imgURL)
+			if err != nil {
+				slog.Warn("Skipping image", "url", imgURL, "error", err)
+				return
+			}
+			defer body.Close()
+			data, err := io.ReadAll(body)
+			if err != nil {
+				slog.Warn("Skipping image (read error)", "url", imgURL, "error", err)
+				return
+			}
+			results[idx] = prefetched{ext: ext, data: data}
+		}(i, u)
 	}
-	if firstBody == nil {
+	wg.Wait()
+
+	// Check at least one image was fetched before committing headers.
+	hasAny := false
+	for _, p := range results {
+		if p.data != nil {
+			hasAny = true
+			break
+		}
+	}
+	if !hasAny {
 		http.Error(w, "No images could be downloaded", http.StatusBadGateway)
 		return
 	}
@@ -177,34 +206,24 @@ func (s *Server) handleDownloadZip(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/zip")
 	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": title + ".zip"}))
 
-	z := zip.NewWriter(w)
+	// 256 KiB buffer reduces syscall count when writing many small entries.
+	bw := bufio.NewWriterSize(w, 256*1024)
+	defer bw.Flush()
+	z := zip.NewWriter(bw)
 	defer z.Close()
 
-	writeEntry := func(idx int, body io.ReadCloser, ext string) {
-		defer body.Close()
-		f, err := z.Create(fmt.Sprintf("image_%03d%s", idx+1, ext))
-		if err != nil {
-			slog.Error("Zip create error", "error", err)
-			return
-		}
-		if _, err := io.Copy(f, body); err != nil && !isClientDisconnect(err) {
-			slog.Error("Zip write error", "url", urls[idx], "error", err)
-		}
-	}
-
-	writeEntry(firstIdx-1, firstBody, firstExt)
-
-	for i := firstIdx; i < len(urls); i++ {
-		if r.Context().Err() != nil {
-			slog.Info("Client disconnected, stopping zip stream")
-			return
-		}
-		body, ext, err := s.reddit.StreamImage(r.Context(), urls[i])
-		if err != nil {
-			slog.Warn("Skipping image", "url", urls[i], "error", err)
+	for i, p := range results {
+		if p.data == nil {
 			continue
 		}
-		writeEntry(i, body, ext)
+		f, err := z.Create(fmt.Sprintf("image_%03d%s", i+1, p.ext))
+		if err != nil {
+			slog.Error("Zip create error", "error", err)
+			continue
+		}
+		if _, err := f.Write(p.data); err != nil && !isClientDisconnect(err) {
+			slog.Error("Zip write error", "error", err)
+		}
 	}
 }
 
@@ -229,13 +248,15 @@ func (s *Server) serveSingleImage(w http.ResponseWriter, ctx context.Context, ra
 	}
 }
 
+// cleanFilename sanitises a string for use as a filename, preserving letters,
+// digits, hyphens, and underscores; converting spaces to underscores.
 func cleanFilename(s string) string {
 	if s == "" {
 		return "reddit_gallery"
 	}
 	return strings.Map(func(r rune) rune {
 		switch {
-		case unicode.IsLetter(r) || unicode.IsDigit(r):
+		case unicode.IsLetter(r) || unicode.IsDigit(r) || r == '-' || r == '_':
 			return r
 		case unicode.IsSpace(r):
 			return '_'

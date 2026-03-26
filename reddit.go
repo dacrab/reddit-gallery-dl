@@ -20,8 +20,6 @@ import (
 const (
 	userAgent      = "golang:reddit-gallery-dl:v1.0.0 (by /u/reddit-gallery-dl)"
 	defaultTimeout = 30 * time.Second
-	maxRetries     = 3
-	baseBackoff    = 2 * time.Second
 )
 
 var (
@@ -32,7 +30,7 @@ var (
 )
 
 // rateLimiter tracks Reddit's x-ratelimit-* headers and calculates the optimal
-// delay before each request to avoid hitting the limit.
+// delay before each request (PRAW algorithm), capped at 2 s to avoid hangs.
 type rateLimiter struct {
 	mu          sync.Mutex
 	nextRequest time.Time
@@ -45,7 +43,6 @@ func (rl *rateLimiter) delay(ctx context.Context) error {
 	if wait <= 0 {
 		return nil
 	}
-	slog.Debug("Rate limiter sleeping", "wait", wait.Round(time.Millisecond))
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -56,30 +53,28 @@ func (rl *rateLimiter) delay(ctx context.Context) error {
 
 func (rl *rateLimiter) update(h http.Header) {
 	remaining := h.Get("X-Ratelimit-Remaining")
-	used := h.Get("X-Ratelimit-Used")
-	reset := h.Get("X-Ratelimit-Reset")
-
 	if remaining == "" {
 		return
 	}
-
 	r, _ := strconv.ParseFloat(remaining, 64)
-	u, _ := strconv.ParseFloat(used, 64)
-	s, _ := strconv.ParseFloat(reset, 64)
+	u, _ := strconv.ParseFloat(h.Get("X-Ratelimit-Used"), 64)
+	s, _ := strconv.ParseFloat(h.Get("X-Ratelimit-Reset"), 64)
 
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
 	if r <= 0 {
-		wait := time.Duration(max(s, 1)) * time.Second
+		// Exhausted — wait for reset, but no longer than 2 s to avoid hanging.
+		wait := time.Duration(min(max(s, 1), 2)) * time.Second
 		rl.nextRequest = time.Now().Add(wait)
-		slog.Warn("Reddit rate limit exhausted, waiting for reset", "wait", wait)
+		slog.Warn("Reddit rate limit exhausted", "wait", wait)
 		return
 	}
 
-	// Spread remaining requests evenly across the reset window.
+	// Spread remaining requests evenly across the reset window (PRAW algorithm),
+	// capped at 2 s so a single fetch never stalls visibly.
 	idealSleep := s - s*(1-u/(r+u))
-	sleep := min(max(idealSleep, 0), min(s, 10))
+	sleep := min(max(idealSleep, 0), 2.0)
 	rl.nextRequest = time.Now().Add(time.Duration(sleep * float64(time.Second)))
 }
 
@@ -90,7 +85,7 @@ type RedditClient struct {
 }
 
 func NewRedditClient() *RedditClient {
-	// Shared transport; HTTP/2 disabled — Reddit CDN rate-limits non-browser HTTP/2 clients.
+	// HTTP/2 disabled — Reddit CDN rate-limits non-browser HTTP/2 clients.
 	transport := &http.Transport{
 		TLSClientConfig:     &tls.Config{MinVersion: tls.VersionTLS13},
 		MaxIdleConns:        10,
@@ -98,12 +93,9 @@ func NewRedditClient() *RedditClient {
 		IdleConnTimeout:     60 * time.Second,
 	}
 	return &RedditClient{
-		client: &http.Client{
-			Timeout:   defaultTimeout,
-			Transport: transport,
-		},
+		client: &http.Client{Timeout: defaultTimeout, Transport: transport},
 		noRedirectClient: &http.Client{
-			Timeout:   defaultTimeout,
+			Timeout:   10 * time.Second,
 			Transport: transport,
 			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 				return http.ErrUseLastResponse
@@ -117,6 +109,7 @@ type Gallery struct {
 	Images []string
 }
 
+// redditResponse is the top-level JSON structure returned by the Reddit post API.
 type redditResponse []struct {
 	Data struct {
 		Children []struct {
@@ -126,11 +119,11 @@ type redditResponse []struct {
 }
 
 type redditPost struct {
-	Title       string `json:"title"`
-	IsGallery   bool   `json:"is_gallery"`
-	IsVideo     bool   `json:"is_video"`
-	URL         string `json:"url_overridden_by_dest"`
-	GalleryData *struct {
+	Title         string `json:"title"`
+	IsGallery     bool   `json:"is_gallery"`
+	IsVideo       bool   `json:"is_video"`
+	URL           string `json:"url_overridden_by_dest"`
+	GalleryData   *struct {
 		Items []struct {
 			MediaID string `json:"media_id"`
 		} `json:"items"`
@@ -175,31 +168,27 @@ func newRequest(ctx context.Context, targetURL string) (*http.Request, error) {
 	return req, nil
 }
 
-// firstNonEmpty returns the first non-empty string from the arguments.
-func firstNonEmpty(vals ...string) string {
-	for _, v := range vals {
-		if v != "" {
-			return v
-		}
+// apiRequest builds a request for Reddit's JSON API endpoints.
+func apiRequest(ctx context.Context, targetURL string) (*http.Request, error) {
+	req, err := newRequest(ctx, targetURL)
+	if err != nil {
+		return nil, err
 	}
-	return ""
+	// Accept ensures we always get JSON, never an HTML fallback.
+	// Accept-Language prevents Reddit redirecting to localised domains.
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+	return req, nil
 }
 
-// stripQuery removes the query string from a URL, returning the clean URL string.
-func stripQuery(raw string) string {
-	if u, err := url.Parse(raw); err == nil {
-		u.RawQuery = ""
-		return u.String()
-	}
-	return raw
-}
-
-// doWithRetry executes the request with PRAW-style rate limiting and retries
-// up to maxRetries times on HTTP 429 with exponential backoff.
-func (r *RedditClient) doWithRetry(ctx context.Context, req *http.Request) (*http.Response, error) {
-	backoff := baseBackoff
-	for attempt := range maxRetries + 1 {
+// do executes a request with PRAW-style rate limiting and one retry on HTTP 429.
+func (r *RedditClient) do(ctx context.Context, targetURL string) (*http.Response, error) {
+	for attempt := range 2 {
 		if err := r.rl.delay(ctx); err != nil {
+			return nil, err
+		}
+		req, err := apiRequest(ctx, targetURL)
+		if err != nil {
 			return nil, err
 		}
 		resp, err := r.client.Do(req)
@@ -211,24 +200,22 @@ func (r *RedditClient) doWithRetry(ctx context.Context, req *http.Request) (*htt
 			return resp, nil
 		}
 		resp.Body.Close()
-		if attempt == maxRetries {
+		if attempt == 1 {
 			break
 		}
-		wait := backoff
+		wait := 2 * time.Second
 		if ra := resp.Header.Get("Retry-After"); ra != "" {
-			if secs, err := strconv.Atoi(ra); err == nil && secs > 0 {
+			if secs, err := strconv.Atoi(ra); err == nil && secs > 0 && secs <= 10 {
 				wait = time.Duration(secs) * time.Second
 			}
 		}
-		backoff *= 2
-		slog.Warn("Reddit rate limited, retrying", "attempt", attempt+1, "wait", wait)
+		slog.Warn("Reddit rate limited, retrying", "wait", wait)
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		case <-time.After(wait):
 		}
 	}
-	slog.Warn("Reddit rate limited, all retries exhausted")
 	return nil, ErrRateLimited
 }
 
@@ -238,25 +225,24 @@ func (r *RedditClient) FetchGallery(ctx context.Context, postURL string) (*Galle
 		return nil, err
 	}
 
-	apiURL := strings.TrimRight(resolvedURL, "/") + ".json"
-	req, err := newRequest(ctx, apiURL)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := r.doWithRetry(ctx, req)
+	resp, err := r.do(ctx, strings.TrimRight(resolvedURL, "/")+".json")
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
+	switch resp.StatusCode {
+	case http.StatusOK:
+		// ok
+	case http.StatusNotFound, http.StatusForbidden:
+		return nil, ErrPostNotFound
+	default:
 		return nil, fmt.Errorf("reddit api status: %d", resp.StatusCode)
 	}
 
 	var data redditResponse
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-		return nil, fmt.Errorf("json decode: %w", err)
+		return nil, ErrPostNotFound // malformed response treated as not found
 	}
 	if len(data) == 0 || len(data[0].Data.Children) == 0 {
 		return nil, ErrPostNotFound
@@ -285,12 +271,22 @@ func (r *RedditClient) resolveURL(ctx context.Context, inputURL string) (string,
 			return "", err
 		}
 	}
+	if !isPostPath(u.Path) {
+		return "", ErrInvalidURL
+	}
 	return "https://www.reddit.com" + u.Path, nil
 }
 
+// isShareLink matches short share URLs: /r/{sub}/s/{id}
 func isShareLink(path string) bool {
 	parts := strings.Split(strings.Trim(path, "/"), "/")
 	return len(parts) == 4 && parts[0] == "r" && parts[2] == "s"
+}
+
+// isPostPath matches full post URLs: /r/{sub}/comments/{id}/...
+func isPostPath(path string) bool {
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	return len(parts) >= 4 && parts[0] == "r" && parts[2] == "comments"
 }
 
 func (r *RedditClient) resolveShareLink(ctx context.Context, shareURL string) (*url.URL, error) {
@@ -331,17 +327,24 @@ func (r *RedditClient) StreamImage(ctx context.Context, urlStr string) (io.ReadC
 	return resp.Body, detectExtension(urlStr, resp.Header.Get("Content-Type")), nil
 }
 
+// extractImages pulls media URLs from a post, trying each source in priority order:
+// gallery > hosted video > video preview > image preview > direct URL.
+// Reddit caps gallery size at 20 images.
 func extractImages(post redditPost) []string {
-	var images []string
-
+	// 1. Multi-image gallery
 	if post.IsGallery && post.GalleryData != nil {
+		var images []string
 		for _, item := range post.GalleryData.Items {
-			media, ok := post.MediaMetadata[item.MediaID]
+			meta, ok := post.MediaMetadata[item.MediaID]
 			if !ok {
 				continue
 			}
-			if raw := firstNonEmpty(media.S.Mp4, media.S.Gif, media.S.U); raw != "" {
-				images = append(images, html.UnescapeString(raw))
+			// Prefer mp4 > gif > static image
+			for _, u := range []string{meta.S.Mp4, meta.S.Gif, meta.S.U} {
+				if u != "" {
+					images = append(images, html.UnescapeString(u))
+					break
+				}
 			}
 		}
 		if len(images) > 0 {
@@ -349,24 +352,26 @@ func extractImages(post redditPost) []string {
 		}
 	}
 
+	// 2. Reddit-hosted video
 	if post.IsVideo && post.Media != nil && post.Media.RedditVideo != nil {
 		if u := post.Media.RedditVideo.FallbackURL; u != "" {
 			return []string{stripQuery(u)}
 		}
 	}
 
+	// 3. Preview (video preview, animated gif/mp4, or static image)
 	if post.Preview != nil {
-		if post.Preview.RedditVideoPreview != nil {
-			if u := post.Preview.RedditVideoPreview.FallbackURL; u != "" {
-				return []string{stripQuery(u)}
-			}
+		if rvp := post.Preview.RedditVideoPreview; rvp != nil && rvp.FallbackURL != "" {
+			return []string{stripQuery(rvp.FallbackURL)}
 		}
+		var images []string
 		for _, img := range post.Preview.Images {
-			if img.Variants.Mp4 != nil {
+			switch {
+			case img.Variants.Mp4 != nil:
 				images = append(images, html.UnescapeString(img.Variants.Mp4.Source.URL))
-			} else if img.Variants.Gif != nil {
+			case img.Variants.Gif != nil:
 				images = append(images, html.UnescapeString(img.Variants.Gif.Source.URL))
-			} else if img.Source.URL != "" {
+			case img.Source.URL != "":
 				images = append(images, html.UnescapeString(img.Source.URL))
 			}
 		}
@@ -375,8 +380,18 @@ func extractImages(post redditPost) []string {
 		}
 	}
 
+	// 4. Direct URL fallback
 	if post.URL != "" {
-		images = append(images, html.UnescapeString(post.URL))
+		return []string{html.UnescapeString(post.URL)}
 	}
-	return images
+	return nil
+}
+
+// stripQuery removes the query string from a URL string.
+func stripQuery(raw string) string {
+	if u, err := url.Parse(raw); err == nil {
+		u.RawQuery = ""
+		return u.String()
+	}
+	return raw
 }

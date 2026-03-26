@@ -11,15 +11,13 @@ import (
 // unreliable results (e.g. .jfif instead of .jpg for image/jpeg).
 func detectExtension(urlStr, contentType string) string {
 	if u, err := url.Parse(urlStr); err == nil {
-		ext := strings.ToLower(path.Ext(u.Path))
-		switch ext {
-		case ".png", ".gif", ".jpg", ".jpeg", ".webp", ".mp4":
+		switch ext := strings.ToLower(path.Ext(u.Path)); ext {
+		case ".png", ".gif", ".gifv", ".jpg", ".jpeg", ".webp", ".mp4", ".webm", ".mov":
 			return ext
 		}
 	}
 	ct, _, _ := strings.Cut(contentType, ";")
-	ct = strings.ToLower(strings.TrimSpace(ct))
-	switch ct {
+	switch strings.ToLower(strings.TrimSpace(ct)) {
 	case "image/jpeg":
 		return ".jpg"
 	case "image/png":
@@ -30,6 +28,10 @@ func detectExtension(urlStr, contentType string) string {
 		return ".webp"
 	case "video/mp4":
 		return ".mp4"
+	case "video/webm":
+		return ".webm"
+	case "video/quicktime":
+		return ".mov"
 	}
 	return ".jpg"
 }

@@ -1,11 +1,14 @@
 package main
 
 import (
+	"context"
 	"html/template"
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -32,8 +35,21 @@ func main() {
 		IdleTimeout:       120 * time.Second,
 	}
 
+	// Shut down gracefully on SIGINT / SIGTERM.
+	go func() {
+		quit := make(chan os.Signal, 1)
+		signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+		<-quit
+		slog.Info("Shutting down…")
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(ctx); err != nil {
+			slog.Error("Graceful shutdown failed", "error", err)
+		}
+	}()
+
 	slog.Info("Starting Reddit Gallery DL", "port", port)
-	if err := srv.ListenAndServe(); err != nil {
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		slog.Error("Server failed", "error", err)
 		os.Exit(1)
 	}
