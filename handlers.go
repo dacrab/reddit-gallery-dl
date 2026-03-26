@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 	"unicode"
 )
 
@@ -208,6 +209,10 @@ func (s *Server) handleDownloadZip(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "No images could be downloaded", http.StatusBadGateway)
 		return
 	}
+
+	// Disable the server's write deadline for zip downloads — the default 60s
+	// is too tight for large galleries on slow connections.
+	http.NewResponseController(w).SetWriteDeadline(time.Time{})
 
 	w.Header().Set("Content-Type", "application/zip")
 	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": title + ".zip"}))
