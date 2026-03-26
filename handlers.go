@@ -165,15 +165,21 @@ func (s *Server) handleDownloadZip(w http.ResponseWriter, r *http.Request) {
 	title := cleanFilename(r.FormValue("page_title"))
 	ctx := r.Context()
 
-	// Fetch all images concurrently (Reddit caps galleries at 20 images).
-	// We buffer into memory so we can return a proper HTTP error if everything
-	// fails, and so zip entries are written sequentially without stalling on I/O.
+	// Fetch images concurrently, capped at 5 in-flight requests to avoid
+	// triggering Reddit CDN rate limiting on large galleries.
+	const maxConcurrent = 5
 	results := make([]prefetched, len(urls))
 	var wg sync.WaitGroup
+	sem := make(chan struct{}, maxConcurrent)
 	for i, u := range urls {
 		wg.Add(1)
 		go func(idx int, imgURL string) {
 			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			if ctx.Err() != nil {
+				return
+			}
 			body, ext, err := s.reddit.StreamImage(ctx, imgURL)
 			if err != nil {
 				slog.Warn("Skipping image", "url", imgURL, "error", err)
