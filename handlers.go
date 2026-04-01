@@ -46,6 +46,7 @@ func (s *Server) Routes() *http.ServeMux {
 	return mux
 }
 
+// gzipWriter wraps ResponseWriter to transparently compress output.
 type gzipWriter struct {
 	http.ResponseWriter
 	gz *gzip.Writer
@@ -53,7 +54,7 @@ type gzipWriter struct {
 
 func (g gzipWriter) Write(b []byte) (int, error) { return g.gz.Write(b) }
 
-// withGzip compresses HTML responses when the client supports it.
+// withGzip compresses responses for clients that support it.
 func withGzip(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
@@ -68,16 +69,15 @@ func withGzip(h http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// render executes the index template, silently ignoring client disconnects.
 func (s *Server) render(w http.ResponseWriter, data TemplateData) {
 	if err := s.tmpl.ExecuteTemplate(w, "index.html", data); err != nil && !isClientDisconnect(err) {
 		slog.Error("Template render failed", "error", err)
 	}
 }
 
-// isClientDisconnect reports whether the error is a normal client disconnect.
-// Net stack errors don't always unwrap to syscall errors, so we also check the
-// message string as a fallback.
+// isClientDisconnect reports whether err is a normal client-side disconnect.
+// Net stack errors don't always unwrap to syscall errors, so the message is
+// checked as a fallback.
 func isClientDisconnect(err error) bool {
 	if errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ECONNRESET) {
 		return true
@@ -138,7 +138,7 @@ func alertForError(err error) *Alert {
 	}
 }
 
-// prefetched holds a fully-downloaded image ready to be written into the zip.
+// prefetched holds a fully-downloaded media file ready to be written into the zip.
 type prefetched struct {
 	ext  string
 	data []byte
@@ -166,8 +166,7 @@ func (s *Server) handleDownloadZip(w http.ResponseWriter, r *http.Request) {
 	title := cleanFilename(r.FormValue("page_title"))
 	ctx := r.Context()
 
-	// Fetch images concurrently, capped at 5 in-flight requests to avoid
-	// triggering Reddit CDN rate limiting on large galleries.
+	// Fetch all images concurrently, capped at 5 in-flight to avoid CDN rate limiting.
 	const maxConcurrent = 5
 	results := make([]prefetched, len(urls))
 	var wg sync.WaitGroup
@@ -197,7 +196,6 @@ func (s *Server) handleDownloadZip(w http.ResponseWriter, r *http.Request) {
 	}
 	wg.Wait()
 
-	// Check at least one image was fetched before committing headers.
 	hasAny := false
 	for _, p := range results {
 		if p.data != nil {
@@ -210,14 +208,14 @@ func (s *Server) handleDownloadZip(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Disable the server's write deadline for zip downloads — the default 60s
-	// is too tight for large galleries on slow connections.
+	// Remove the write deadline — the default 60s is too tight for large galleries
+	// on slow connections.
 	http.NewResponseController(w).SetWriteDeadline(time.Time{})
 
 	w.Header().Set("Content-Type", "application/zip")
 	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": title + ".zip"}))
 
-	// 256 KiB buffer reduces syscall count when writing many small entries.
+	// 256 KiB buffer reduces syscall overhead when writing many small entries.
 	bw := bufio.NewWriterSize(w, 256*1024)
 	defer bw.Flush()
 	z := zip.NewWriter(bw)
@@ -259,8 +257,9 @@ func (s *Server) serveSingleImage(w http.ResponseWriter, ctx context.Context, ra
 	}
 }
 
-// cleanFilename sanitises a string for use as a filename, preserving letters,
-// digits, hyphens, and underscores; converting spaces to underscores.
+// cleanFilename sanitises a string for use as a filename: letters, digits,
+// hyphens and underscores are kept; spaces become underscores; everything else
+// is stripped.
 func cleanFilename(s string) string {
 	if s == "" {
 		return "reddit_gallery"

@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://v.redd.it">
 <link rel="preconnect" href="https://i.redd.it">
 <link rel="preconnect" href="https://preview.redd.it">
-<!-- Apply theme before first paint to prevent flash -->
+<!-- Apply theme before first paint to avoid a flash of the wrong theme. -->
 <script>document.documentElement.dataset.theme=localStorage.getItem('theme')||'dark'</script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -234,8 +234,9 @@ nav .spacer{flex:1}
       </div>
       <div class="grid">
         {{ range $i, $url := .Images }}
-        {{ $isVideo := hasSuffix $url ".mp4" }}
-        {{ $isGif   := hasSuffix $url ".gif" }}
+        {{ $ext     := urlExt $url }}
+        {{ $isVideo := eq $ext ".mp4" }}
+        {{ $isGif   := eq $ext ".gif" }}
         <div class="card sel" onclick="toggleSel(this)">
           <div class="check-badge">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
@@ -289,6 +290,7 @@ function syncIcons(t) {
   document.getElementById('iconDark').style.display  = t === 'dark'  ? '' : 'none';
   document.getElementById('iconLight').style.display = t === 'light' ? '' : 'none';
 }
+
 function toggleTheme() {
   const next = html.dataset.theme === 'dark' ? 'light' : 'dark';
   localStorage.setItem('theme', next);
@@ -296,10 +298,10 @@ function toggleTheme() {
   syncIcons(next);
 }
 
-// Sync icons with the theme already applied in <head>.
+// Sync theme icons with the value already applied in <head>.
 syncIcons(html.dataset.theme);
 
-// Show paste button only when Clipboard API is available.
+// Show the paste button only when the Clipboard API is available.
 if (navigator.clipboard?.readText)
   document.getElementById('pasteBtn').hidden = false;
 
@@ -317,10 +319,13 @@ async function doPaste() {
     input.focus();
     btn.classList.add('ok');
     setTimeout(() => btn.classList.remove('ok'), 1400);
-  } catch { input.focus(); input.select(); }
+  } catch {
+    input.focus();
+    input.select();
+  }
 }
 
-// Gallery — only runs when images are present.
+// Gallery logic — only runs when the action bar is present (i.e. images loaded).
 const actionBar = document.getElementById('actionBar');
 if (actionBar) {
   const selCount = document.getElementById('selCount');
@@ -359,7 +364,7 @@ if (actionBar) {
     updateBar();
   };
 
-  // Lazy-load videos: fetch only when entering the viewport.
+  // Lazy-load videos: swap in the real src only when the card enters the viewport.
   if ('IntersectionObserver' in window) {
     const vo = new IntersectionObserver(entries => {
       entries.forEach(e => {

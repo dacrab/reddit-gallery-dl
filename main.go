@@ -5,16 +5,28 @@ import (
 	"html/template"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
+	"path"
 	"strings"
 	"syscall"
 	"time"
 )
 
+// urlExt returns the lowercased file extension from the path portion of a URL,
+// ignoring query strings and fragments. Used by templates to detect media type.
+func urlExt(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return strings.ToLower(path.Ext(rawURL))
+	}
+	return strings.ToLower(path.Ext(u.Path))
+}
+
 func main() {
 	tmpl, err := template.New("").Funcs(template.FuncMap{
-		"hasSuffix": strings.HasSuffix,
+		"urlExt": urlExt,
 	}).ParseGlob("templates/*.html")
 	if err != nil {
 		slog.Error("Failed to parse templates", "error", err)
@@ -31,11 +43,10 @@ func main() {
 		Handler:           NewServer(tmpl).Routes(),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      60 * time.Second, // must exceed Reddit client timeout (30s)
+		WriteTimeout:      60 * time.Second, // must exceed the Reddit client timeout (30s)
 		IdleTimeout:       120 * time.Second,
 	}
 
-	// Shut down gracefully on SIGINT / SIGTERM.
 	go func() {
 		quit := make(chan os.Signal, 1)
 		signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
