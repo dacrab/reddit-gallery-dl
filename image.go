@@ -6,10 +6,16 @@ import (
 	"strings"
 )
 
-// detectExtension infers a file extension from a URL or Content-Type header.
-// The URL path takes priority; mime.ExtensionsByType is avoided because it
-// sorts results alphabetically and returns unreliable values (e.g. ".jfif"
-// instead of ".jpg" for image/jpeg).
+// urlExt returns the lowercased extension from a URL's path, ignoring query strings.
+func urlExt(rawURL string) string {
+	if u, err := url.Parse(rawURL); err == nil {
+		return strings.ToLower(path.Ext(u.Path))
+	}
+	return strings.ToLower(path.Ext(rawURL))
+}
+
+// detectExtension returns a file extension from the URL path or Content-Type.
+// URL path is preferred; mime.ExtensionsByType is unreliable (returns .jfif for image/jpeg).
 func detectExtension(urlStr, contentType string) string {
 	if u, err := url.Parse(urlStr); err == nil {
 		switch ext := strings.ToLower(path.Ext(u.Path)); ext {

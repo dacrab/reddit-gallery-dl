@@ -43,7 +43,6 @@ func (s *Server) Routes() *http.ServeMux {
 	return mux
 }
 
-// gzipWriter wraps ResponseWriter to compress output transparently.
 type gzipWriter struct {
 	http.ResponseWriter
 	gz *gzip.Writer
@@ -71,8 +70,8 @@ func (s *Server) render(w http.ResponseWriter, data TemplateData) {
 	}
 }
 
-// isClientDisconnect reports whether err is a normal client-side disconnect.
-// String matching is needed because net stack errors don't always unwrap to syscall.
+// isClientDisconnect reports whether err is caused by the client disconnecting.
+// String matching is a fallback because net errors don't always unwrap to syscall errors.
 func isClientDisconnect(err error) bool {
 	if errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ECONNRESET) {
 		return true
@@ -158,8 +157,7 @@ func (s *Server) handleDownloadZip(w http.ResponseWriter, r *http.Request) {
 	title := cleanFilename(r.FormValue("page_title"))
 	ctx := r.Context()
 
-	// Cap concurrency to avoid CDN rate limiting.
-	const maxConcurrent = 5
+	const maxConcurrent = 5 // cap concurrency to avoid CDN rate limiting
 	results := make([]prefetched, len(urls))
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, maxConcurrent)
@@ -206,7 +204,7 @@ func (s *Server) handleDownloadZip(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/zip")
 	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": title + ".zip"}))
 
-	bw := bufio.NewWriterSize(w, 256*1024) // 256 KiB buffer reduces syscall overhead
+	bw := bufio.NewWriterSize(w, 256*1024) // 256 KiB reduces syscall overhead
 	defer bw.Flush()
 	z := zip.NewWriter(bw)
 	defer z.Close()
@@ -247,8 +245,8 @@ func (s *Server) serveSingleImage(w http.ResponseWriter, ctx context.Context, ra
 	}
 }
 
-// cleanFilename sanitises s for use as a filename: letters, digits, hyphens and
-// underscores are kept; spaces become underscores; everything else is stripped.
+// cleanFilename sanitises s for use as a filename.
+// Spaces become underscores; anything not a letter, digit, hyphen or underscore is stripped.
 func cleanFilename(s string) string {
 	if s == "" {
 		return "reddit_gallery"

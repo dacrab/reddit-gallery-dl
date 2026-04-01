@@ -5,24 +5,11 @@ import (
 	"html/template"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"os"
 	"os/signal"
-	"path"
-	"strings"
 	"syscall"
 	"time"
 )
-
-// urlExt returns the lowercased file extension from the path portion of a URL,
-// ignoring query strings and fragments. Used by templates to detect media type.
-func urlExt(rawURL string) string {
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		return strings.ToLower(path.Ext(rawURL))
-	}
-	return strings.ToLower(path.Ext(u.Path))
-}
 
 func main() {
 	tmpl, err := template.New("").Funcs(template.FuncMap{

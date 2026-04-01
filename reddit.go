@@ -49,8 +49,8 @@ type redditPost struct {
 		} `json:"items"`
 	} `json:"gallery_data"`
 
-	// MediaMetadata is keyed by media ID; E is "Image" or "AnimatedImage".
-	// Mp4 may be a ?format=mp4 query trick — its URL path is not always .mp4.
+	// MediaMetadata keyed by media ID. E is "Image" or "AnimatedImage".
+	// Mp4 may be a ?format=mp4 query trick — the URL path is not always .mp4.
 	MediaMetadata map[string]struct {
 		E string `json:"e"`
 		S struct {
@@ -126,7 +126,7 @@ func (r *RedditClient) request(ctx context.Context, rawURL string, acceptJSON bo
 	return req, nil
 }
 
-// rateLimiter serialises Reddit API calls using PRAW's algorithm.
+// rateLimiter serialises Reddit API calls (PRAW algorithm).
 // The mutex is held across the sleep so concurrent callers queue rather than burst.
 type rateLimiter struct{ mu sync.Mutex }
 
@@ -234,7 +234,7 @@ func (r *RedditClient) FetchGallery(ctx context.Context, postURL string) (*Galle
 	return &Gallery{Title: post.Title, Images: images}, nil
 }
 
-// StreamImage fetches a media URL and returns the body (caller must close), extension, and error.
+// StreamImage fetches a media URL and returns the body (caller must close) and extension.
 func (r *RedditClient) StreamImage(ctx context.Context, rawURL string) (io.ReadCloser, string, error) {
 	req, err := r.request(ctx, rawURL, false)
 	if err != nil {
@@ -251,8 +251,6 @@ func (r *RedditClient) StreamImage(ctx context.Context, rawURL string) (io.ReadC
 	return resp.Body, detectExtension(rawURL, resp.Header.Get("Content-Type")), nil
 }
 
-// resolveURL normalises the input and returns a canonical reddit.com post URL,
-// following share-link redirects when needed.
 func (r *RedditClient) resolveURL(ctx context.Context, inputURL string) (string, error) {
 	inputURL = strings.TrimSpace(inputURL)
 	if !strings.HasPrefix(inputURL, "http") {
@@ -274,13 +272,11 @@ func (r *RedditClient) resolveURL(ctx context.Context, inputURL string) (string,
 	return "https://www.reddit.com" + u.Path, nil
 }
 
-// isShareLink matches /r/{sub}/s/{id} short URLs.
 func isShareLink(p string) bool {
 	parts := strings.Split(strings.Trim(p, "/"), "/")
 	return len(parts) == 4 && parts[0] == "r" && parts[2] == "s"
 }
 
-// isPostPath matches /r/{sub}/comments/{id}/... full post URLs.
 func isPostPath(p string) bool {
 	parts := strings.Split(strings.Trim(p, "/"), "/")
 	return len(parts) >= 4 && parts[0] == "r" && parts[2] == "comments"
@@ -308,7 +304,7 @@ func (r *RedditClient) resolveShareLink(ctx context.Context, shareURL string) (*
 }
 
 // extractImages returns ordered media URLs from a post.
-// Priority: gallery items → hosted video → preview block → direct URL.
+// Priority: gallery → hosted video → preview → direct URL fallback.
 func extractImages(post redditPost) []string {
 	if post.IsGallery && post.GalleryData != nil {
 		var urls []string
@@ -321,9 +317,8 @@ func extractImages(post redditPost) []string {
 			mp4 := html.UnescapeString(meta.S.Mp4)
 			static := html.UnescapeString(meta.S.U)
 			switch {
-			// Prefer the direct i.redd.it GIF: plays in <img> with a clean .gif path.
-			// The Mp4 field is often a ?format=mp4 trick whose path still ends in .gif —
-			// only use it when the path is genuinely .mp4.
+			// Prefer direct i.redd.it GIF — plays in <img> with a clean .gif path.
+			// Mp4 is often a ?format=mp4 trick whose path ends in .gif, not .mp4.
 			case gif != "":
 				urls = append(urls, gif)
 			case mp4 != "" && urlExt(mp4) == ".mp4":
@@ -369,7 +364,6 @@ func extractImages(post redditPost) []string {
 	return nil
 }
 
-// stripQuery removes the query string from a URL.
 func stripQuery(raw string) string {
 	if u, err := url.Parse(raw); err == nil {
 		u.RawQuery = ""
