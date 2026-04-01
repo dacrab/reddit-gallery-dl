@@ -110,8 +110,8 @@ func NewRedditClient() *RedditClient {
 	}
 }
 
-// request builds a GET with the Reddit user-agent and over-18 cookie.
-// acceptJSON adds headers that prevent Reddit from redirecting to a localised domain.
+// request builds a GET with Reddit's user-agent, over-18 cookie, and optionally
+// JSON headers (which prevent Reddit redirecting to a localised domain).
 func (r *RedditClient) request(ctx context.Context, rawURL string, acceptJSON bool) (*http.Request, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
@@ -126,8 +126,8 @@ func (r *RedditClient) request(ctx context.Context, rawURL string, acceptJSON bo
 	return req, nil
 }
 
-// rateLimiter serialises Reddit API calls (PRAW algorithm).
-// The mutex is held across the sleep so concurrent callers queue rather than burst.
+// rateLimiter serialises Reddit API calls using PRAW's algorithm.
+// Holding the mutex across the sleep queues concurrent callers instead of bursting.
 type rateLimiter struct{ mu sync.Mutex }
 
 func (rl *rateLimiter) wait(ctx context.Context, h http.Header) error {
@@ -317,8 +317,8 @@ func extractImages(post redditPost) []string {
 			mp4 := html.UnescapeString(meta.S.Mp4)
 			static := html.UnescapeString(meta.S.U)
 			switch {
-			// Prefer direct i.redd.it GIF — plays in <img> with a clean .gif path.
-			// Mp4 is often a ?format=mp4 trick whose path ends in .gif, not .mp4.
+			// Prefer direct GIF (i.redd.it): plays in <img>, clean .gif path.
+			// Mp4 is often a ?format=mp4 trick — path ends in .gif, not .mp4.
 			case gif != "":
 				urls = append(urls, gif)
 			case mp4 != "" && urlExt(mp4) == ".mp4":

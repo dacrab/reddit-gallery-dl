@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"path"
 	"strings"
+	"slices"
 	"sync"
 	"syscall"
 	"time"
@@ -70,8 +71,8 @@ func (s *Server) render(w http.ResponseWriter, data TemplateData) {
 	}
 }
 
-// isClientDisconnect reports whether err is caused by the client disconnecting.
-// String matching is a fallback because net errors don't always unwrap to syscall errors.
+// isClientDisconnect reports whether err is a normal client-side disconnect.
+// String fallback is needed because net errors don't always unwrap to syscall.
 func isClientDisconnect(err error) bool {
 	if errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ECONNRESET) {
 		return true
@@ -186,14 +187,7 @@ func (s *Server) handleDownloadZip(w http.ResponseWriter, r *http.Request) {
 	}
 	wg.Wait()
 
-	hasAny := false
-	for _, p := range results {
-		if p.data != nil {
-			hasAny = true
-			break
-		}
-	}
-	if !hasAny {
+	if !slices.ContainsFunc(results, func(p prefetched) bool { return p.data != nil }) {
 		http.Error(w, "No images could be downloaded", http.StatusBadGateway)
 		return
 	}
@@ -245,8 +239,7 @@ func (s *Server) serveSingleImage(w http.ResponseWriter, ctx context.Context, ra
 	}
 }
 
-// cleanFilename sanitises s for use as a filename.
-// Spaces become underscores; anything not a letter, digit, hyphen or underscore is stripped.
+// cleanFilename sanitises s: spaces → underscores, non-alphanumeric/hyphen/underscore stripped.
 func cleanFilename(s string) string {
 	if s == "" {
 		return "reddit_gallery"
