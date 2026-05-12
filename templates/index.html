@@ -5,7 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Reddit Gallery DL</title>
 <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
-<link rel="preconnect" href="https://v.redd.it">
 <link rel="preconnect" href="https://i.redd.it">
 <link rel="preconnect" href="https://preview.redd.it">
 <script>document.documentElement.dataset.theme=localStorage.getItem('theme')||'dark'</script>
@@ -23,7 +22,7 @@
   --border:#d0d7de;--text:#1f2328;--muted:#636e7b;
 }
 
-body{min-height:100dvh;display:flex;flex-direction:column;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.5;overflow-x:hidden}
+body{min-height:100dvh;display:flex;flex-direction:column;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.5}
 
 nav{display:flex;align-items:center;padding:.6rem 1.25rem;border-bottom:1px solid var(--border);gap:.75rem}
 .brand{display:flex;align-items:center;gap:.5rem;font-weight:700;font-size:1.1rem;text-decoration:none;color:var(--text)}
@@ -84,10 +83,8 @@ nav .spacer{flex:1}
   aspect-ratio:1;background:var(--bg3);cursor:pointer;
   border:2px solid transparent;
   transition:box-shadow .2s,border-color .15s;
-  content-visibility:auto;
-  contain-intrinsic-size:220px 220px;
 }
-.card:hover{box-shadow:0 8px 20px rgba(0,0,0,.3);will-change:transform;transform:translateY(-3px)}
+.card:hover{box-shadow:0 8px 20px rgba(0,0,0,.3);transform:translateY(-3px)}
 .card.sel{border-color:var(--accent);transform:scale(.97)}
 .card.sel::after{content:'';position:absolute;inset:0;background:rgba(255,69,0,.12);pointer-events:none}
 .card img,.card video{width:100%;height:100%;object-fit:cover;display:block}
@@ -144,10 +141,6 @@ nav .spacer{flex:1}
 .empty{text-align:center;color:var(--muted);opacity:.25;margin-top:5rem}
 
 .container{max-width:1280px;margin:0 auto;padding:0 1.25rem}
-
-::-webkit-scrollbar{width:6px}
-::-webkit-scrollbar-track{background:var(--bg)}
-::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
 </style>
 </head>
 <body>
@@ -286,9 +279,9 @@ function toggleTheme() {
   syncIcons(next);
 }
 
-syncIcons(html.dataset.theme); // sync with theme set in <head>
+syncIcons(html.dataset.theme);
 
-if (navigator.clipboard?.readText) // show paste btn only if Clipboard API available
+if (navigator.clipboard?.readText)
   document.getElementById('pasteBtn').hidden = false;
 
 function onSubmit() {
@@ -348,23 +341,6 @@ if (actionBar) {
     });
     updateBar();
   };
-
-  if ('IntersectionObserver' in window) { // lazy-load videos on viewport entry
-    const vo = new IntersectionObserver(entries => {
-      entries.forEach(e => {
-        if (!e.isIntersecting) return;
-        const v = e.target;
-        v.src = v.dataset.src;
-        v.play().catch(() => {});
-        vo.unobserve(v);
-      });
-    }, { rootMargin: '200px' });
-    document.querySelectorAll('video[preload="none"]').forEach(v => {
-      v.dataset.src = v.src;
-      v.removeAttribute('src');
-      vo.observe(v);
-    });
-  }
 }
 </script>
 </body>

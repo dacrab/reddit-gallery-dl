@@ -1,7 +1,4 @@
 .git
-.gitignore
 .github
-.env
 *.md
 reddit-gallery-dl
-*.test
