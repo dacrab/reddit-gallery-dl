@@ -18,7 +18,7 @@ import (
 	"unicode"
 )
 
-const maxURLs = 100
+const maxURLs = 50
 
 func routes(tmpl *template.Template) *http.ServeMux {
 	mux := http.NewServeMux()
@@ -123,28 +123,27 @@ func handleDownloadZip(w http.ResponseWriter, r *http.Request) {
 	zw := zip.NewWriter(w)
 	defer zw.Close()
 
-	// Download and stream directly into ZIP, limited concurrency via sequential writes.
-	// We fetch concurrently but write sequentially to avoid ZIP corruption.
 	type result struct {
 		idx  int
 		ext  string
 		body io.ReadCloser
 	}
 
-	results := make(chan result, 5)
+	results := make(chan result, 3)
 	var wg sync.WaitGroup
 
 	go func() {
-		sem := make(chan struct{}, 5)
 		for i, u := range urls {
 			wg.Add(1)
 			go func(idx int, imgURL string) {
 				defer wg.Done()
-				sem <- struct{}{}
-				defer func() { <-sem }()
-				if ctx.Err() != nil {
+				// Global semaphore — bounds total memory across all requests.
+				select {
+				case dlSem <- struct{}{}:
+				case <-ctx.Done():
 					return
 				}
+				defer func() { <-dlSem }()
 				body, ext, err := streamImage(ctx, imgURL)
 				if err != nil {
 					log.Printf("skip %s: %v", imgURL, err)

@@ -16,7 +16,11 @@ import (
 	"time"
 )
 
-const userAgent = "golang:reddit-gallery-dl:v1.0.0 (by /u/reddit-gallery-dl)"
+const (
+	userAgent    = "golang:reddit-gallery-dl:v1.0.0 (by /u/reddit-gallery-dl)"
+	maxJSONBytes = 2 * 1024 * 1024  // 2MB max Reddit JSON response
+	maxImageSize = 50 * 1024 * 1024 // 50MB max per image/video
+)
 
 var (
 	ErrInvalidURL   = errors.New("invalid reddit url")
@@ -24,7 +28,18 @@ var (
 	ErrNoImages     = errors.New("no images found in post")
 	ErrRateLimited  = errors.New("reddit is rate limiting requests")
 
-	httpClient = &http.Client{Timeout: 30 * time.Second}
+	httpClient = &http.Client{
+		Timeout: 30 * time.Second,
+		Transport: &http.Transport{
+			MaxIdleConns:        20,
+			MaxIdleConnsPerHost: 5,
+			MaxConnsPerHost:     10,
+			IdleConnTimeout:     30 * time.Second,
+		},
+	}
+
+	// Global semaphore: max 10 concurrent image downloads across all requests.
+	dlSem = make(chan struct{}, 10)
 )
 
 type redditResponse []struct {
@@ -162,7 +177,7 @@ func fetchGallery(ctx context.Context, postURL string) (*Gallery, error) {
 	}
 
 	var data redditResponse
-	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil || len(data) == 0 || len(data[0].Data.Children) == 0 {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxJSONBytes)).Decode(&data); err != nil || len(data) == 0 || len(data[0].Data.Children) == 0 {
 		return nil, ErrPostNotFound
 	}
 	post := data[0].Data.Children[0].Data
@@ -186,7 +201,21 @@ func streamImage(ctx context.Context, rawURL string) (io.ReadCloser, string, err
 		resp.Body.Close()
 		return nil, "", fmt.Errorf("status %d", resp.StatusCode)
 	}
-	return resp.Body, detectExtension(rawURL, resp.Header.Get("Content-Type")), nil
+	// Wrap body with size limit to prevent OOM on huge files.
+	limited := io.NopCloser(io.LimitReader(resp.Body, maxImageSize))
+	body := &closerWrapper{limited, resp.Body}
+	return body, detectExtension(rawURL, resp.Header.Get("Content-Type")), nil
+}
+
+// closerWrapper reads from r but closes underlying.
+type closerWrapper struct {
+	io.ReadCloser
+	underlying io.Closer
+}
+
+func (c *closerWrapper) Close() error {
+	c.ReadCloser.Close()
+	return c.underlying.Close()
 }
 
 func resolveURL(ctx context.Context, inputURL string) (string, error) {
