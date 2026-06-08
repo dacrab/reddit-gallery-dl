@@ -140,7 +140,6 @@ func handleDownloadZip(w http.ResponseWriter, r *http.Request) {
 			wg.Add(1)
 			go func(idx int, imgURL string) {
 				defer wg.Done()
-				// Global semaphore — bounds total memory across all requests.
 				select {
 				case dlSem <- struct{}{}:
 				case <-ctx.Done():

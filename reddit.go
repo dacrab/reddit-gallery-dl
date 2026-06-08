@@ -19,8 +19,8 @@ import (
 
 const (
 	userAgent    = "golang:reddit-gallery-dl:v1.0.0 (by /u/reddit-gallery-dl)"
-	maxJSONBytes = 2 * 1024 * 1024  // 2MB max Reddit JSON response
-	maxImageSize = 50 * 1024 * 1024 // 50MB max per image/video
+	maxJSONBytes = 2 * 1024 * 1024
+	maxImageSize = 50 * 1024 * 1024
 )
 
 var (
@@ -40,7 +40,6 @@ var (
 		},
 	}
 
-	// Global semaphore: max 10 concurrent image downloads across all requests.
 	dlSem = make(chan struct{}, 10)
 )
 
@@ -115,7 +114,6 @@ func redditRequest(ctx context.Context, rawURL string, acceptJSON bool) (*http.R
 	return req, nil
 }
 
-// doReddit executes a request with one retry on 429.
 func doReddit(ctx context.Context, rawURL string) (*http.Response, error) {
 	req, err := redditRequest(ctx, rawURL, true)
 	if err != nil {
@@ -130,7 +128,6 @@ func doReddit(ctx context.Context, rawURL string) (*http.Response, error) {
 	}
 	resp.Body.Close()
 
-	// One retry after waiting Retry-After (or 2s default).
 	wait := 2 * time.Second
 	if ra := resp.Header.Get("Retry-After"); ra != "" {
 		if secs, err := strconv.Atoi(ra); err == nil && secs > 0 && secs <= 10 {
@@ -193,19 +190,17 @@ func fetchGallery(ctx context.Context, postURL string) (*Gallery, error) {
 }
 
 var (
-	galleryLinkRE     = regexp.MustCompile(`gallery-item-thumbnail-link[^>]+href="([^"]+)"`)
-	titleRE           = regexp.MustCompile(`<title>([^<]+)`)
-	dataGalleryRE     = regexp.MustCompile(`data-is-gallery="([^"]+)"`)
-	dataURLRE         = regexp.MustCompile(`data-url="([^"]+)"`)
-	dataMediaIDsRE    = regexp.MustCompile(`data-media-ids="([^"]+)"`)
-	mediaPreviewIDRE  = regexp.MustCompile(`preview\.redd\.it/([^\.?]+)\.([a-z0-9]+)`)
+	rxTitle      = regexp.MustCompile(`<title>([^<]+)`)
+	rxMediaIDs   = regexp.MustCompile(`data-media-ids="([^"]+)"`)
+	rxPreviewExt = regexp.MustCompile(`preview\.redd\.it/([^\.?]+)\.([a-z0-9]+)`)
+	rxDataURL    = regexp.MustCompile(`data-url="([^"]+)"`)
 )
 
 func fetchGalleryFromHTML(ctx context.Context, resolved string) (*Gallery, error) {
 	htmlURL := "https://old.reddit.com" + strings.TrimRight(strings.TrimPrefix(resolved, "https://www.reddit.com"), "/") + "/"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, htmlURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("creating html request: %w", err)
+		return nil, err
 	}
 	req.Header.Set("User-Agent", userAgent)
 	req.AddCookie(&http.Cookie{Name: "over18", Value: "1"})
@@ -214,7 +209,7 @@ func fetchGalleryFromHTML(ctx context.Context, resolved string) (*Gallery, error
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("fetching html: %w", err)
+		return nil, err
 	}
 	defer resp.Body.Close()
 
@@ -225,80 +220,46 @@ func fetchGalleryFromHTML(ctx context.Context, resolved string) (*Gallery, error
 		return nil, fmt.Errorf("old.reddit.com status: %d", resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024))
+	b, err := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024))
 	if err != nil {
-		return nil, fmt.Errorf("reading html: %w", err)
+		return nil, err
 	}
+	page := string(b)
 
-	pageHTML := string(body)
-
-	title := extractTitle(pageHTML)
-	images := extractImagesFromHTML(pageHTML)
-	if len(images) == 0 {
-		return nil, ErrNoImages
-	}
-	return &Gallery{Title: title, Images: images}, nil
-}
-
-func extractTitle(page string) string {
-	m := titleRE.FindStringSubmatch(page)
-	if len(m) < 2 {
-		return ""
-	}
-	t := m[1]
-	if idx := strings.LastIndex(t, " : "); idx > 0 {
-		t = t[:idx]
-	}
-	return t
-}
-
-func extractImagesFromHTML(page string) []string {
-	isGallery := dataGalleryRE.FindStringSubmatch(page)
-	if len(isGallery) > 0 && isGallery[1] == "true" {
-		return extractGalleryImages(page)
-	}
-	m := dataURLRE.FindStringSubmatch(page)
-	if len(m) > 1 && m[1] != "" {
-		return []string{html.UnescapeString(m[1])}
-	}
-	return nil
-}
-
-func extractGalleryImages(page string) []string {
-	// Extract media IDs from data-media-ids
-	mediaIDs := dataMediaIDsRE.FindStringSubmatch(page)
-	if len(mediaIDs) < 2 || mediaIDs[1] == "" {
-		return nil
-	}
-	ids := strings.Split(mediaIDs[1], ",")
-
-	// Build extension lookup from preview URLs (e.g. preview.redd.it/ID.ext?...
-	extByID := make(map[string]string)
-	for _, m := range galleryLinkRE.FindAllStringSubmatch(page, -1) {
-		u := html.UnescapeString(m[1])
-		if em := mediaPreviewIDRE.FindStringSubmatch(u); len(em) > 2 {
-			extByID[em[1]] = "." + em[2]
+	title := ""
+	if m := rxTitle.FindStringSubmatch(page); len(m) > 1 {
+		title = m[1]
+		if idx := strings.LastIndex(title, " : "); idx > 0 {
+			title = title[:idx]
 		}
 	}
 
 	var urls []string
-	seen := make(map[string]bool)
-	for _, id := range ids {
-		id = strings.TrimSpace(id)
-		if id == "" {
-			continue
+	if strings.Contains(page, `data-is-gallery="true"`) {
+		idsStr := ""
+		if m := rxMediaIDs.FindStringSubmatch(page); len(m) > 1 {
+			idsStr = m[1]
 		}
-		ext, ok := extByID[id]
-		if !ok {
-			continue
+		if idsStr != "" {
+			ext := map[string]string{}
+			for _, m := range rxPreviewExt.FindAllStringSubmatch(page, -1) {
+				ext[m[1]] = "." + m[2]
+			}
+			for _, id := range strings.Split(idsStr, ",") {
+				id = strings.TrimSpace(id)
+				if e, ok := ext[id]; ok {
+					urls = append(urls, "https://i.redd.it/"+id+e)
+				}
+			}
 		}
-		u := "https://i.redd.it/" + id + ext
-		if !seen[u] {
-			seen[u] = true
-			urls = append(urls, u)
-		}
+	} else if m := rxDataURL.FindStringSubmatch(page); len(m) > 1 && m[1] != "" {
+		urls = []string{html.UnescapeString(m[1])}
 	}
-	return urls
+
+	if len(urls) == 0 {
+		return nil, ErrNoImages
+	}
+	return &Gallery{Title: title, Images: urls}, nil
 }
 
 func streamImage(ctx context.Context, rawURL string) (io.ReadCloser, string, error) {
@@ -314,13 +275,11 @@ func streamImage(ctx context.Context, rawURL string) (io.ReadCloser, string, err
 		resp.Body.Close()
 		return nil, "", fmt.Errorf("status %d", resp.StatusCode)
 	}
-	// Wrap body with size limit to prevent OOM on huge files.
 	limited := io.NopCloser(io.LimitReader(resp.Body, maxImageSize))
 	body := &closerWrapper{limited, resp.Body}
 	return body, detectExtension(rawURL, resp.Header.Get("Content-Type")), nil
 }
 
-// closerWrapper reads from r but closes underlying.
 type closerWrapper struct {
 	io.ReadCloser
 	underlying io.Closer
@@ -458,7 +417,6 @@ func stripQuery(raw string) string {
 	return raw
 }
 
-// urlExt returns the lowercased extension from a URL path.
 func urlExt(rawURL string) string {
 	if u, err := url.Parse(rawURL); err == nil {
 		return strings.ToLower(path.Ext(u.Path))
@@ -466,7 +424,6 @@ func urlExt(rawURL string) string {
 	return strings.ToLower(path.Ext(rawURL))
 }
 
-// detectExtension returns a file extension from URL path or Content-Type.
 func detectExtension(urlStr, contentType string) string {
 	if u, err := url.Parse(urlStr); err == nil {
 		switch ext := strings.ToLower(path.Ext(u.Path)); ext {

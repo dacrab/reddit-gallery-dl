@@ -8,19 +8,12 @@ import (
 	"os"
 	"os/signal"
 	"runtime/debug"
-	"strconv"
 	"syscall"
 	"time"
 )
 
 func main() {
-	gcPercent := 20
-	if s := os.Getenv("GC_PERCENT"); s != "" {
-		if v, err := strconv.Atoi(s); err == nil && v > 0 && v <= 100 {
-			gcPercent = v
-		}
-	}
-	debug.SetGCPercent(gcPercent)
+	debug.SetGCPercent(20)
 
 	tmpl := template.Must(template.New("").Funcs(template.FuncMap{"urlExt": urlExt}).ParseGlob("templates/*.html"))
 
@@ -39,8 +32,8 @@ func main() {
 
 	go func() {
 		log.Printf("Starting on :%s", port)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("listen: %v", err)
+		if err := srv.ListenAndServe(); err != http.ErrServerClosed {
+			log.Fatal(err)
 		}
 	}()
 
@@ -52,6 +45,6 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(ctx); err != nil {
-		log.Fatalf("forced shutdown: %v", err)
+		log.Fatal(err)
 	}
 }
