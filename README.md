@@ -33,10 +33,9 @@ Deployed on [Render](https://render.com) via the `Dockerfile`. Set the `PORT` en
 
 | File | Purpose |
 |---|---|
-| `main.go` | HTTP server setup and timeouts |
-| `reddit.go` | Reddit API client, rate limiter, media extraction |
-| `handlers.go` | HTTP handlers, gzip compression, ZIP streaming |
-| `image.go` | File extension detection |
+| `main.go` | HTTP server setup and entry point |
+| `reddit.go` | Reddit API client, rate limiter, media extraction, URL utilities |
+| `handlers.go` | HTTP handlers, ZIP streaming, error handling |
 
 ## License
 

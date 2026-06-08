@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -23,10 +24,11 @@ const (
 )
 
 var (
-	ErrInvalidURL   = errors.New("invalid reddit url")
-	ErrPostNotFound = errors.New("post not found or deleted")
-	ErrNoImages     = errors.New("no images found in post")
-	ErrRateLimited  = errors.New("reddit is rate limiting requests")
+	ErrInvalidURL    = errors.New("invalid reddit url")
+	ErrPostNotFound  = errors.New("post not found or deleted")
+	ErrNoImages      = errors.New("no images found in post")
+	ErrRateLimited   = errors.New("reddit is rate limiting requests")
+	ErrAccessDenied  = errors.New("reddit blocked the request")
 
 	httpClient = &http.Client{
 		Timeout: 30 * time.Second,
@@ -63,7 +65,6 @@ type redditPost struct {
 	} `json:"gallery_data"`
 
 	MediaMetadata map[string]struct {
-		E string `json:"e"`
 		S struct {
 			U   string `json:"u"`
 			Gif string `json:"gif"`
@@ -169,23 +170,135 @@ func fetchGallery(ctx context.Context, postURL string) (*Gallery, error) {
 	}
 	defer resp.Body.Close()
 
+	switch resp.StatusCode {
+	case http.StatusOK:
+		var data redditResponse
+		if err := json.NewDecoder(io.LimitReader(resp.Body, maxJSONBytes)).Decode(&data); err != nil || len(data) == 0 || len(data[0].Data.Children) == 0 {
+			return nil, ErrPostNotFound
+		}
+		post := data[0].Data.Children[0].Data
+		images := extractImages(post)
+		if len(images) == 0 {
+			return nil, ErrNoImages
+		}
+		return &Gallery{Title: post.Title, Images: images}, nil
+	case http.StatusForbidden:
+		log.Printf("JSON API returned 403, falling back to HTML scrape: %s", resolved)
+		return fetchGalleryFromHTML(ctx, resolved)
+	case http.StatusNotFound:
+		return nil, ErrPostNotFound
+	default:
+		return nil, fmt.Errorf("reddit api status: %d", resp.StatusCode)
+	}
+}
+
+var (
+	galleryLinkRE     = regexp.MustCompile(`gallery-item-thumbnail-link[^>]+href="([^"]+)"`)
+	titleRE           = regexp.MustCompile(`<title>([^<]+)`)
+	dataGalleryRE     = regexp.MustCompile(`data-is-gallery="([^"]+)"`)
+	dataURLRE         = regexp.MustCompile(`data-url="([^"]+)"`)
+	dataMediaIDsRE    = regexp.MustCompile(`data-media-ids="([^"]+)"`)
+	mediaPreviewIDRE  = regexp.MustCompile(`preview\.redd\.it/([^\.?]+)\.([a-z0-9]+)`)
+)
+
+func fetchGalleryFromHTML(ctx context.Context, resolved string) (*Gallery, error) {
+	htmlURL := "https://old.reddit.com" + strings.TrimRight(strings.TrimPrefix(resolved, "https://www.reddit.com"), "/") + "/"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, htmlURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating html request: %w", err)
+	}
+	req.Header.Set("User-Agent", userAgent)
+	req.AddCookie(&http.Cookie{Name: "over18", Value: "1"})
+	req.Header.Set("Accept", "text/html,application/xhtml+xml")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetching html: %w", err)
+	}
+	defer resp.Body.Close()
+
 	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusForbidden {
 		return nil, ErrPostNotFound
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("reddit api status: %d", resp.StatusCode)
+		return nil, fmt.Errorf("old.reddit.com status: %d", resp.StatusCode)
 	}
 
-	var data redditResponse
-	if err := json.NewDecoder(io.LimitReader(resp.Body, maxJSONBytes)).Decode(&data); err != nil || len(data) == 0 || len(data[0].Data.Children) == 0 {
-		return nil, ErrPostNotFound
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024))
+	if err != nil {
+		return nil, fmt.Errorf("reading html: %w", err)
 	}
-	post := data[0].Data.Children[0].Data
-	images := extractImages(post)
+
+	pageHTML := string(body)
+
+	title := extractTitle(pageHTML)
+	images := extractImagesFromHTML(pageHTML)
 	if len(images) == 0 {
 		return nil, ErrNoImages
 	}
-	return &Gallery{Title: post.Title, Images: images}, nil
+	return &Gallery{Title: title, Images: images}, nil
+}
+
+func extractTitle(page string) string {
+	m := titleRE.FindStringSubmatch(page)
+	if len(m) < 2 {
+		return ""
+	}
+	t := m[1]
+	if idx := strings.LastIndex(t, " : "); idx > 0 {
+		t = t[:idx]
+	}
+	return t
+}
+
+func extractImagesFromHTML(page string) []string {
+	isGallery := dataGalleryRE.FindStringSubmatch(page)
+	if len(isGallery) > 0 && isGallery[1] == "true" {
+		return extractGalleryImages(page)
+	}
+	m := dataURLRE.FindStringSubmatch(page)
+	if len(m) > 1 && m[1] != "" {
+		return []string{html.UnescapeString(m[1])}
+	}
+	return nil
+}
+
+func extractGalleryImages(page string) []string {
+	// Extract media IDs from data-media-ids
+	mediaIDs := dataMediaIDsRE.FindStringSubmatch(page)
+	if len(mediaIDs) < 2 || mediaIDs[1] == "" {
+		return nil
+	}
+	ids := strings.Split(mediaIDs[1], ",")
+
+	// Build extension lookup from preview URLs (e.g. preview.redd.it/ID.ext?...
+	extByID := make(map[string]string)
+	for _, m := range galleryLinkRE.FindAllStringSubmatch(page, -1) {
+		u := html.UnescapeString(m[1])
+		if em := mediaPreviewIDRE.FindStringSubmatch(u); len(em) > 2 {
+			extByID[em[1]] = "." + em[2]
+		}
+	}
+
+	var urls []string
+	seen := make(map[string]bool)
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		ext, ok := extByID[id]
+		if !ok {
+			continue
+		}
+		u := "https://i.redd.it/" + id + ext
+		if !seen[u] {
+			seen[u] = true
+			urls = append(urls, u)
+		}
+	}
+	return urls
 }
 
 func streamImage(ctx context.Context, rawURL string) (io.ReadCloser, string, error) {
@@ -361,8 +474,8 @@ func detectExtension(urlStr, contentType string) string {
 			return ext
 		}
 	}
-	ct, _, _ := strings.Cut(contentType, ";")
-	switch strings.ToLower(strings.TrimSpace(ct)) {
+	mediaType, _, _ := strings.Cut(contentType, ";")
+	switch strings.ToLower(strings.TrimSpace(mediaType)) {
 	case "image/jpeg":
 		return ".jpg"
 	case "image/png":

@@ -150,7 +150,6 @@ func TestExtractImages_Gallery(t *testing.T) {
 			},
 		},
 		MediaMetadata: map[string]struct {
-			E string `json:"e"`
 			S struct {
 				U   string `json:"u"`
 				Gif string `json:"gif"`

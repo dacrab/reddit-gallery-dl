@@ -64,6 +64,7 @@ func handleIndex(tmpl *template.Template) http.HandlerFunc {
 		urlStr := r.FormValue("url")
 		gallery, err := fetchGallery(r.Context(), urlStr)
 		if err != nil {
+			log.Printf("fetch gallery %q: %v", urlStr, err)
 			render(w, templateData{URL: urlStr, Alert: alertForError(err)})
 			return
 		}
@@ -86,6 +87,8 @@ func alertForError(err error) *alert {
 		return &alert{"This post exists but has no images.", "info"}
 	case errors.Is(err, ErrRateLimited):
 		return &alert{"Reddit is rate limiting requests. Please wait a moment and try again.", "warning"}
+	case errors.Is(err, ErrAccessDenied):
+		return &alert{"Reddit blocked the request. This can happen on hosted servers. Try a different Reddit link.", "warning"}
 	default:
 		return &alert{"Something went wrong. Please try again.", "danger"}
 	}
