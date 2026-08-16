@@ -137,35 +137,15 @@ func TestUrlExt(t *testing.T) {
 func TestExtractImages_Gallery(t *testing.T) {
 	post := redditPost{
 		IsGallery: true,
-		GalleryData: &struct {
-			Items []struct {
-				MediaID string `json:"media_id"`
-			} `json:"items"`
-		}{
-			Items: []struct {
-				MediaID string `json:"media_id"`
-			}{
+		GalleryData: &galleryData{
+			Items: []galleryItem{
 				{MediaID: "img1"},
 				{MediaID: "img2"},
 			},
 		},
-		MediaMetadata: map[string]struct {
-			S struct {
-				U   string `json:"u"`
-				Gif string `json:"gif"`
-				Mp4 string `json:"mp4"`
-			} `json:"s"`
-		}{
-			"img1": {S: struct {
-				U   string `json:"u"`
-				Gif string `json:"gif"`
-				Mp4 string `json:"mp4"`
-			}{U: "https://i.redd.it/img1.jpg"}},
-			"img2": {S: struct {
-				U   string `json:"u"`
-				Gif string `json:"gif"`
-				Mp4 string `json:"mp4"`
-			}{Gif: "https://i.redd.it/img2.gif"}},
+		MediaMetadata: map[string]mediaMetadata{
+			"img1": {S: mediaSource{U: "https://i.redd.it/img1.jpg"}},
+			"img2": {S: mediaSource{Gif: "https://i.redd.it/img2.gif"}},
 		},
 	}
 	imgs := extractImages(post)

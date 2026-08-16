@@ -61,6 +61,10 @@ func handleIndex(tmpl *template.Template) http.HandlerFunc {
 			return
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		if err := r.ParseForm(); err != nil {
+			render(w, templateData{Alert: &alert{"Form data too large or malformed.", "warning"}})
+			return
+		}
 		urlStr := r.FormValue("url")
 		gallery, err := fetchGallery(r.Context(), urlStr)
 		if err != nil {
@@ -87,8 +91,6 @@ func alertForError(err error) *alert {
 		return &alert{"This post exists but has no images.", "info"}
 	case errors.Is(err, ErrRateLimited):
 		return &alert{"Reddit is rate limiting requests. Please wait a moment and try again.", "warning"}
-	case errors.Is(err, ErrAccessDenied):
-		return &alert{"Reddit blocked the request. This can happen on hosted servers. Try a different Reddit link.", "warning"}
 	default:
 		return &alert{"Something went wrong. Please try again.", "danger"}
 	}
@@ -113,7 +115,7 @@ func handleDownloadZip(w http.ResponseWriter, r *http.Request) {
 		urls = urls[:maxURLs]
 	}
 	if len(urls) == 1 {
-		serveSingleImage(w, r.Context(), urls[0])
+		serveSingleImage(r.Context(), w, urls[0])
 		return
 	}
 
@@ -124,15 +126,23 @@ func handleDownloadZip(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": title + ".zip"}))
 
 	zw := zip.NewWriter(w)
-	defer zw.Close()
+	defer func() {
+		if err := zw.Close(); err != nil && !isClientDisconnect(err) {
+			log.Printf("zip close error: %v", err)
+		}
+	}()
 
-	type result struct {
-		idx  int
+	type item struct {
 		ext  string
 		body io.ReadCloser
 	}
 
-	results := make(chan result, 3)
+	type result struct {
+		idx int
+		item
+	}
+
+	results := make(chan result, len(urls))
 	var wg sync.WaitGroup
 
 	go func() {
@@ -151,34 +161,55 @@ func handleDownloadZip(w http.ResponseWriter, r *http.Request) {
 					log.Printf("skip %s: %v", imgURL, err)
 					return
 				}
-				results <- result{idx, ext, body}
+				results <- result{idx: idx, item: item{ext: ext, body: body}}
 			}(i, u)
 		}
 		wg.Wait()
 		close(results)
 	}()
 
+	buf := make(map[int]item)
+	next := 0
 	for res := range results {
-		f, err := zw.Create(fmt.Sprintf("image_%03d%s", res.idx+1, res.ext))
-		if err != nil {
-			res.body.Close()
+		buf[res.idx] = res.item
+		if ctx.Err() != nil {
 			continue
 		}
-		_, err = io.Copy(f, res.body)
-		res.body.Close()
-		if err != nil && !isClientDisconnect(err) {
-			log.Printf("zip write error: %v", err)
+		for {
+			cur, ok := buf[next]
+			if !ok {
+				break
+			}
+			delete(buf, next)
+			f, err := zw.Create(fmt.Sprintf("image_%03d%s", next+1, cur.ext))
+			if err == nil {
+				_, err = io.Copy(f, cur.body)
+			}
+			if cerr := cur.body.Close(); cerr != nil && !isClientDisconnect(cerr) {
+				log.Printf("image close error: %v", cerr)
+			}
+			if err != nil && !isClientDisconnect(err) {
+				log.Printf("zip write error: %v", err)
+			}
+			next++
 		}
+	}
+	for _, cur := range buf {
+		_ = cur.body.Close()
 	}
 }
 
-func serveSingleImage(w http.ResponseWriter, ctx context.Context, rawURL string) {
+func serveSingleImage(ctx context.Context, w http.ResponseWriter, rawURL string) {
 	body, ext, err := streamImage(ctx, rawURL)
 	if err != nil {
 		http.Error(w, "Failed to fetch image", http.StatusBadGateway)
 		return
 	}
-	defer body.Close()
+	defer func() {
+		if err := body.Close(); err != nil && !isClientDisconnect(err) {
+			log.Printf("image close error: %v", err)
+		}
+	}()
 
 	filename := "image" + ext
 	if u, _ := url.Parse(rawURL); u != nil {

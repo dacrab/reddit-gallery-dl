@@ -28,8 +28,13 @@ var (
 	ErrPostNotFound  = errors.New("post not found or deleted")
 	ErrNoImages      = errors.New("no images found in post")
 	ErrRateLimited   = errors.New("reddit is rate limiting requests")
-	ErrAccessDenied  = errors.New("reddit blocked the request")
+	ErrImageTooLarge = errors.New("image exceeds maximum allowed size")
+)
 
+// httpClient, noRedirectClient, and dlSem are package-level to keep the code
+// simple. Tests temporarily replace httpClient with a local test server's
+// client; those overrides are not safe for parallel test execution.
+var (
 	httpClient = &http.Client{
 		Timeout: 30 * time.Second,
 		Transport: &http.Transport{
@@ -37,6 +42,13 @@ var (
 			MaxIdleConnsPerHost: 5,
 			MaxConnsPerHost:     10,
 			IdleConnTimeout:     30 * time.Second,
+		},
+	}
+
+	noRedirectClient = &http.Client{
+		Timeout: 10 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
 		},
 	}
 
@@ -51,25 +63,33 @@ type redditResponse []struct {
 	} `json:"data"`
 }
 
+type galleryData struct {
+	Items []galleryItem `json:"items"`
+}
+
+type galleryItem struct {
+	MediaID string `json:"media_id"`
+}
+
+type mediaSource struct {
+	U   string `json:"u"`
+	Gif string `json:"gif"`
+	Mp4 string `json:"mp4"`
+}
+
+type mediaMetadata struct {
+	S mediaSource `json:"s"`
+}
+
 type redditPost struct {
 	Title     string `json:"title"`
 	IsGallery bool   `json:"is_gallery"`
 	IsVideo   bool   `json:"is_video"`
 	URL       string `json:"url_overridden_by_dest"`
 
-	GalleryData *struct {
-		Items []struct {
-			MediaID string `json:"media_id"`
-		} `json:"items"`
-	} `json:"gallery_data"`
+	GalleryData *galleryData `json:"gallery_data"`
 
-	MediaMetadata map[string]struct {
-		S struct {
-			U   string `json:"u"`
-			Gif string `json:"gif"`
-			Mp4 string `json:"mp4"`
-		} `json:"s"`
-	} `json:"media_metadata"`
+	MediaMetadata map[string]mediaMetadata `json:"media_metadata"`
 
 	Media *struct {
 		RedditVideo *struct {
@@ -82,13 +102,19 @@ type redditPost struct {
 			FallbackURL string `json:"fallback_url"`
 		} `json:"reddit_video_preview"`
 		Images []struct {
-			Source   struct{ URL string `json:"url"` } `json:"source"`
+			Source struct {
+				URL string `json:"url"`
+			} `json:"source"`
 			Variants struct {
 				GIF *struct {
-					Source struct{ URL string `json:"url"` } `json:"source"`
+					Source struct {
+						URL string `json:"url"`
+					} `json:"source"`
 				} `json:"gif"`
 				MP4 *struct {
-					Source struct{ URL string `json:"url"` } `json:"source"`
+					Source struct {
+						URL string `json:"url"`
+					} `json:"source"`
 				} `json:"mp4"`
 			} `json:"variants"`
 		} `json:"images"`
@@ -126,7 +152,7 @@ func doReddit(ctx context.Context, rawURL string) (*http.Response, error) {
 	if resp.StatusCode != http.StatusTooManyRequests {
 		return resp, nil
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	wait := 2 * time.Second
 	if ra := resp.Header.Get("Retry-After"); ra != "" {
@@ -150,7 +176,7 @@ func doReddit(ctx context.Context, rawURL string) (*http.Response, error) {
 		return nil, err
 	}
 	if resp.StatusCode == http.StatusTooManyRequests {
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		return nil, ErrRateLimited
 	}
 	return resp, nil
@@ -165,7 +191,7 @@ func fetchGallery(ctx context.Context, postURL string) (*Gallery, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	switch resp.StatusCode {
 	case http.StatusOK:
@@ -197,7 +223,11 @@ var (
 )
 
 func fetchGalleryFromHTML(ctx context.Context, resolved string) (*Gallery, error) {
-	htmlURL := "https://old.reddit.com" + strings.TrimRight(strings.TrimPrefix(resolved, "https://www.reddit.com"), "/") + "/"
+	u, err := url.Parse(resolved)
+	if err != nil {
+		return nil, err
+	}
+	htmlURL := "https://old.reddit.com" + strings.TrimRight(u.Path, "/") + "/"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, htmlURL, nil)
 	if err != nil {
 		return nil, err
@@ -220,7 +250,7 @@ func fetchGalleryFromHTML(ctx context.Context, resolved string) (*Gallery, error
 		return nil, fmt.Errorf("old.reddit.com status: %d", resp.StatusCode)
 	}
 
-	b, err := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024))
+	b, err := io.ReadAll(io.LimitReader(resp.Body, maxJSONBytes))
 	if err != nil {
 		return nil, err
 	}
@@ -272,22 +302,38 @@ func streamImage(ctx context.Context, rawURL string) (io.ReadCloser, string, err
 		return nil, "", err
 	}
 	if resp.StatusCode != http.StatusOK {
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		return nil, "", fmt.Errorf("status %d", resp.StatusCode)
 	}
-	limited := io.NopCloser(io.LimitReader(resp.Body, maxImageSize))
-	body := &closerWrapper{limited, resp.Body}
-	return body, detectExtension(rawURL, resp.Header.Get("Content-Type")), nil
+	return &limitedImageBody{body: resp.Body, remaining: maxImageSize + 1}, detectExtension(rawURL, resp.Header.Get("Content-Type")), nil
 }
 
-type closerWrapper struct {
-	io.ReadCloser
-	underlying io.Closer
+// limitedImageBody caps an image stream at maxImageSize+1 bytes: reading past
+// the cap returns ErrImageTooLarge instead of silently truncating, and Close
+// drains the remainder so the connection returns to the keep-alive pool.
+type limitedImageBody struct {
+	body      io.ReadCloser
+	remaining int64
 }
 
-func (c *closerWrapper) Close() error {
-	c.ReadCloser.Close()
-	return c.underlying.Close()
+func (b *limitedImageBody) Read(p []byte) (int, error) {
+	if b.remaining == 0 {
+		return 0, ErrImageTooLarge
+	}
+	if int64(len(p)) > b.remaining {
+		p = p[:int(b.remaining)]
+	}
+	n, err := b.body.Read(p)
+	b.remaining -= int64(n)
+	if n > 0 && b.remaining == 0 {
+		err = ErrImageTooLarge
+	}
+	return n, err
+}
+
+func (b *limitedImageBody) Close() error {
+	_, _ = io.Copy(io.Discard, b.body)
+	return b.body.Close()
 }
 
 func resolveURL(ctx context.Context, inputURL string) (string, error) {
@@ -326,21 +372,15 @@ func isPostPath(p string) bool {
 }
 
 func resolveShareLink(ctx context.Context, shareURL string) (*url.URL, error) {
-	noRedirect := &http.Client{
-		Timeout: 10 * time.Second,
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
 	req, err := redditRequest(ctx, shareURL, false)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := noRedirect.Do(req)
+	resp, err := noRedirectClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	loc := resp.Header.Get("Location")
 	if loc == "" {
 		return nil, ErrInvalidURL
@@ -364,10 +404,10 @@ func extractImages(post redditPost) []string {
 			mp4 := html.UnescapeString(meta.S.Mp4)
 			static := html.UnescapeString(meta.S.U)
 			switch {
-			case gif != "":
-				urls = append(urls, gif)
 			case mp4 != "" && urlExt(mp4) == ".mp4":
 				urls = append(urls, mp4)
+			case gif != "":
+				urls = append(urls, gif)
 			case static != "":
 				urls = append(urls, static)
 			}
@@ -424,10 +464,14 @@ func urlExt(rawURL string) string {
 	return strings.ToLower(path.Ext(rawURL))
 }
 
+var imageExts = map[string]bool{
+	".png": true, ".gif": true, ".gifv": true, ".jpg": true,
+	".jpeg": true, ".webp": true, ".mp4": true, ".webm": true, ".mov": true,
+}
+
 func detectExtension(urlStr, contentType string) string {
 	if u, err := url.Parse(urlStr); err == nil {
-		switch ext := strings.ToLower(path.Ext(u.Path)); ext {
-		case ".png", ".gif", ".gifv", ".jpg", ".jpeg", ".webp", ".mp4", ".webm", ".mov":
+		if ext := strings.ToLower(path.Ext(u.Path)); imageExts[ext] {
 			return ext
 		}
 	}
