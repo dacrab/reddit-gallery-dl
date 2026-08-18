@@ -228,14 +228,11 @@ func fetchGalleryFromHTML(ctx context.Context, resolved string) (*Gallery, error
 		return nil, err
 	}
 	htmlURL := "https://old.reddit.com" + strings.TrimRight(u.Path, "/") + "/"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, htmlURL, nil)
+	req, err := redditRequest(ctx, htmlURL, false)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", userAgent)
-	req.AddCookie(&http.Cookie{Name: "over18", Value: "1"})
 	req.Header.Set("Accept", "text/html,application/xhtml+xml")
-	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
 
 	resp, err := httpClient.Do(req)
 	if err != nil {

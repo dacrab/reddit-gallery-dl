@@ -212,7 +212,7 @@ func serveSingleImage(ctx context.Context, w http.ResponseWriter, rawURL string)
 	}()
 
 	filename := "image" + ext
-	if u, _ := url.Parse(rawURL); u != nil {
+	if u, err := url.Parse(rawURL); err == nil {
 		if base := path.Base(u.Path); base != "." && base != "/" {
 			filename = base
 		}
