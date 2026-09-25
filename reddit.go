@@ -55,12 +55,47 @@ var (
 	dlSem = make(chan struct{}, 10)
 )
 
+type redditChild struct {
+	Data redditPost `json:"data"`
+}
+
+type redditListing struct {
+	Children []redditChild `json:"children"`
+}
+
 type redditResponse []struct {
-	Data struct {
-		Children []struct {
-			Data redditPost `json:"data"`
-		} `json:"children"`
-	} `json:"data"`
+	Data redditListing `json:"data"`
+}
+
+type redditVideo struct {
+	FallbackURL string `json:"fallback_url"`
+}
+
+type redditMedia struct {
+	RedditVideo *redditVideo `json:"reddit_video"`
+}
+
+type previewSource struct {
+	URL string `json:"url"`
+}
+
+type previewVariant struct {
+	Source previewSource `json:"source"`
+}
+
+type previewImage struct {
+	Source   previewSource   `json:"source"`
+	Variants previewVariants `json:"variants"`
+}
+
+type previewVariants struct {
+	GIF *previewVariant `json:"gif"`
+	MP4 *previewVariant `json:"mp4"`
+}
+
+type redditPreview struct {
+	RedditVideoPreview *redditVideo   `json:"reddit_video_preview"`
+	Images             []previewImage `json:"images"`
 }
 
 type galleryData struct {
@@ -87,39 +122,12 @@ type redditPost struct {
 	IsVideo   bool   `json:"is_video"`
 	URL       string `json:"url_overridden_by_dest"`
 
-	GalleryData *galleryData `json:"gallery_data"`
-
+	GalleryData   *galleryData             `json:"gallery_data"`
 	MediaMetadata map[string]mediaMetadata `json:"media_metadata"`
-
-	Media *struct {
-		RedditVideo *struct {
-			FallbackURL string `json:"fallback_url"`
-		} `json:"reddit_video"`
-	} `json:"media"`
-
-	Preview *struct {
-		RedditVideoPreview *struct {
-			FallbackURL string `json:"fallback_url"`
-		} `json:"reddit_video_preview"`
-		Images []struct {
-			Source struct {
-				URL string `json:"url"`
-			} `json:"source"`
-			Variants struct {
-				GIF *struct {
-					Source struct {
-						URL string `json:"url"`
-					} `json:"source"`
-				} `json:"gif"`
-				MP4 *struct {
-					Source struct {
-						URL string `json:"url"`
-					} `json:"source"`
-				} `json:"mp4"`
-			} `json:"variants"`
-		} `json:"images"`
-	} `json:"preview"`
+	Media         *redditMedia             `json:"media"`
+	Preview       *redditPreview           `json:"preview"`
 }
+
 type archivedResponse struct {
 	Data []redditPost `json:"data"`
 }
@@ -202,12 +210,7 @@ func fetchGallery(ctx context.Context, postURL string) (*Gallery, error) {
 		if err := json.NewDecoder(io.LimitReader(resp.Body, maxJSONBytes)).Decode(&data); err != nil || len(data) == 0 || len(data[0].Data.Children) == 0 {
 			return nil, ErrPostNotFound
 		}
-		post := data[0].Data.Children[0].Data
-		images := extractImages(post)
-		if len(images) == 0 {
-			return nil, ErrNoImages
-		}
-		return &Gallery{Title: post.Title, Images: images}, nil
+		return galleryFromPost(data[0].Data.Children[0].Data)
 	case http.StatusForbidden:
 		log.Printf("JSON API returned 403, falling back to HTML scrape: %s", resolved)
 		gallery, htmlErr := fetchGalleryFromHTML(ctx, resolved)
@@ -221,6 +224,14 @@ func fetchGallery(ctx context.Context, postURL string) (*Gallery, error) {
 	default:
 		return nil, fmt.Errorf("reddit api status: %d", resp.StatusCode)
 	}
+}
+
+func galleryFromPost(post redditPost) (*Gallery, error) {
+	images := extractImages(post)
+	if len(images) == 0 {
+		return nil, ErrNoImages
+	}
+	return &Gallery{Title: post.Title, Images: images}, nil
 }
 
 var (
@@ -295,6 +306,7 @@ func fetchGalleryFromHTML(ctx context.Context, resolved string) (*Gallery, error
 		return nil, ErrNoImages
 	}
 	return &Gallery{Title: title, Images: urls}, nil
+
 }
 func fetchGalleryFromArchive(ctx context.Context, resolved string) (*Gallery, error) {
 	u, err := url.Parse(resolved)
@@ -321,11 +333,7 @@ func fetchGalleryFromArchive(ctx context.Context, resolved string) (*Gallery, er
 	if err := json.NewDecoder(io.LimitReader(resp.Body, maxJSONBytes)).Decode(&data); err != nil || len(data.Data) == 0 {
 		return nil, ErrPostNotFound
 	}
-	images := extractImages(data.Data[0])
-	if len(images) == 0 {
-		return nil, ErrNoImages
-	}
-	return &Gallery{Title: data.Data[0].Title, Images: images}, nil
+	return galleryFromPost(data.Data[0])
 }
 
 func streamImage(ctx context.Context, rawURL string) (io.ReadCloser, string, error) {

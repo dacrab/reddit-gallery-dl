@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -163,14 +162,8 @@ func TestExtractImages_Gallery(t *testing.T) {
 func TestExtractImages_Video(t *testing.T) {
 	post := redditPost{
 		IsVideo: true,
-		Media: &struct {
-			RedditVideo *struct {
-				FallbackURL string `json:"fallback_url"`
-			} `json:"reddit_video"`
-		}{
-			RedditVideo: &struct {
-				FallbackURL string `json:"fallback_url"`
-			}{FallbackURL: "https://v.redd.it/abc/DASH_720.mp4?source=fallback"},
+		Media: &redditMedia{
+			RedditVideo: &redditVideo{FallbackURL: "https://v.redd.it/abc/DASH_720.mp4?source=fallback"},
 		},
 	}
 	imgs := extractImages(post)
@@ -197,45 +190,23 @@ func TestExtractImages_Empty(t *testing.T) {
 	}
 }
 
-func TestFetchGallery(t *testing.T) {
-	resp := redditResponse{
-		{Data: struct {
-			Children []struct {
-				Data redditPost `json:"data"`
-			} `json:"children"`
-		}{
-			Children: []struct {
-				Data redditPost `json:"data"`
-			}{
-				{Data: redditPost{
-					Title: "Test Post",
-					URL:   "https://i.redd.it/test.jpg",
-				}},
-			},
-		}},
-	}
-
+func TestDoReddit_OK(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
 
-	// Override httpClient for test
 	origClient := httpClient
 	httpClient = srv.Client()
 	defer func() { httpClient = origClient }()
 
-	// We can't easily test fetchGallery without also mocking resolveURL,
-	// so test doReddit directly against our mock server.
-	ctx := context.Background()
-	r, err := doReddit(ctx, srv.URL+"/r/test/comments/abc/title.json")
+	resp, err := doReddit(context.Background(), srv.URL+"/r/test/comments/abc/title.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	r.Body.Close()
-	if r.StatusCode != http.StatusOK {
-		t.Errorf("status = %d", r.StatusCode)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d", resp.StatusCode)
 	}
 }
 

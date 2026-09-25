@@ -18,7 +18,10 @@ import (
 	"unicode"
 )
 
-const maxURLs = 50
+const (
+	maxFormBytes = 1 << 20
+	maxURLs      = 50
+)
 
 func routes(tmpl *template.Template) *http.ServeMux {
 	mux := http.NewServeMux()
@@ -60,9 +63,9 @@ func handleIndex(tmpl *template.Template) http.HandlerFunc {
 			render(w, templateData{})
 			return
 		}
-		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		r.Body = http.MaxBytesReader(w, r.Body, maxFormBytes)
 		if err := r.ParseForm(); err != nil {
-			render(w, templateData{Alert: &alert{"Form data too large or malformed.", "warning"}})
+			render(w, templateData{Alert: &alert{Message: "Form data too large or malformed.", Type: "warning"}})
 			return
 		}
 		urlStr := r.FormValue("url")
@@ -76,7 +79,7 @@ func handleIndex(tmpl *template.Template) http.HandlerFunc {
 			Title:  gallery.Title,
 			Images: gallery.Images,
 			URL:    urlStr,
-			Alert:  &alert{fmt.Sprintf("Loaded %d images!", len(gallery.Images)), "success"},
+			Alert:  &alert{Message: fmt.Sprintf("Loaded %d images!", len(gallery.Images)), Type: "success"},
 		})
 	}
 }
@@ -84,15 +87,15 @@ func handleIndex(tmpl *template.Template) http.HandlerFunc {
 func alertForError(err error) *alert {
 	switch {
 	case errors.Is(err, ErrInvalidURL):
-		return &alert{"That doesn't look like a valid Reddit link.", "warning"}
+		return &alert{Message: "That doesn't look like a valid Reddit link.", Type: "warning"}
 	case errors.Is(err, ErrPostNotFound):
-		return &alert{"Post not found. It might be deleted or private.", "warning"}
+		return &alert{Message: "Post not found. It might be deleted or private.", Type: "warning"}
 	case errors.Is(err, ErrNoImages):
-		return &alert{"This post exists but has no images.", "info"}
+		return &alert{Message: "This post exists but has no images.", Type: "info"}
 	case errors.Is(err, ErrRateLimited):
-		return &alert{"Reddit is rate limiting requests. Please wait a moment and try again.", "warning"}
+		return &alert{Message: "Reddit is rate limiting requests. Please wait a moment and try again.", Type: "warning"}
 	default:
-		return &alert{"Something went wrong. Please try again.", "danger"}
+		return &alert{Message: "Something went wrong. Please try again.", Type: "danger"}
 	}
 }
 
@@ -101,7 +104,7 @@ func handleDownloadZip(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	r.Body = http.MaxBytesReader(w, r.Body, maxFormBytes)
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "Invalid form data", http.StatusBadRequest)
 		return

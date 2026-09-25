@@ -6,7 +6,7 @@ A web tool to browse and download Reddit galleries — images, GIFs and videos �
 
 - **Gallery support** — multi-image posts, GIFs, Reddit-hosted videos (`v.redd.it`)
 - **ZIP download** — stream selected media directly to a ZIP, no server buffering
-- **Smart rate limiting** — PRAW-style proactive throttling respects Reddit's API headers
+- **Rate-limit handling** — retries transient Reddit rate limits using the server-provided delay
 - **Zero external dependencies** — pure Go standard library
 - **Reddit access fallback** — uses a public post archive when Reddit blocks the JSON endpoint
 - **Dark/light mode** — persisted via localStorage
@@ -34,9 +34,12 @@ Deployed on [Render](https://render.com) via the `Dockerfile`. Set the `PORT` en
 
 | File | Purpose |
 |---|---|
-| `main.go` | HTTP server setup and entry point |
-| `reddit.go` | Reddit API client, rate limiter, media extraction, URL utilities |
-| `handlers.go` | HTTP handlers, ZIP streaming, error handling |
+| `main.go` | HTTP server setup, lifecycle, and graceful shutdown |
+| `reddit.go` | Reddit/archive clients, media extraction, and URL utilities |
+| `handlers.go` | HTTP handlers, ZIP streaming, and error mapping |
+| `templates/` | Server-rendered page and browser behavior |
+| `static/` | Served browser assets |
+| `*_test.go` | HTTP, extraction, and utility regression tests |
 
 ## License
 
