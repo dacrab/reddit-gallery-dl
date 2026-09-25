@@ -132,7 +132,7 @@ type archivedResponse struct {
 	Data []redditPost `json:"data"`
 }
 
-type Gallery struct {
+type gallery struct {
 	Title  string
 	Images []string
 }
@@ -193,7 +193,7 @@ func doReddit(ctx context.Context, rawURL string) (*http.Response, error) {
 	return resp, nil
 }
 
-func fetchGallery(ctx context.Context, postURL string) (*Gallery, error) {
+func fetchGallery(ctx context.Context, postURL string) (*gallery, error) {
 	resolved, err := resolveURL(ctx, postURL)
 	if err != nil {
 		return nil, err
@@ -226,12 +226,12 @@ func fetchGallery(ctx context.Context, postURL string) (*Gallery, error) {
 	}
 }
 
-func galleryFromPost(post redditPost) (*Gallery, error) {
+func galleryFromPost(post redditPost) (*gallery, error) {
 	images := extractImages(post)
 	if len(images) == 0 {
 		return nil, ErrNoImages
 	}
-	return &Gallery{Title: post.Title, Images: images}, nil
+	return &gallery{Title: post.Title, Images: images}, nil
 }
 
 var (
@@ -241,7 +241,7 @@ var (
 	rxDataURL    = regexp.MustCompile(`data-url="([^"]+)"`)
 )
 
-func fetchGalleryFromHTML(ctx context.Context, resolved string) (*Gallery, error) {
+func fetchGalleryFromHTML(ctx context.Context, resolved string) (*gallery, error) {
 	u, err := url.Parse(resolved)
 	if err != nil {
 		return nil, err
@@ -305,10 +305,10 @@ func fetchGalleryFromHTML(ctx context.Context, resolved string) (*Gallery, error
 	if len(urls) == 0 {
 		return nil, ErrNoImages
 	}
-	return &Gallery{Title: title, Images: urls}, nil
-
+	return &gallery{Title: title, Images: urls}, nil
 }
-func fetchGalleryFromArchive(ctx context.Context, resolved string) (*Gallery, error) {
+
+func fetchGalleryFromArchive(ctx context.Context, resolved string) (*gallery, error) {
 	u, err := url.Parse(resolved)
 	if err != nil {
 		return nil, err
