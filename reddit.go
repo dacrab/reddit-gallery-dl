@@ -120,6 +120,9 @@ type redditPost struct {
 		} `json:"images"`
 	} `json:"preview"`
 }
+type archivedResponse struct {
+	Data []redditPost `json:"data"`
+}
 
 type Gallery struct {
 	Title  string
@@ -207,7 +210,12 @@ func fetchGallery(ctx context.Context, postURL string) (*Gallery, error) {
 		return &Gallery{Title: post.Title, Images: images}, nil
 	case http.StatusForbidden:
 		log.Printf("JSON API returned 403, falling back to HTML scrape: %s", resolved)
-		return fetchGalleryFromHTML(ctx, resolved)
+		gallery, htmlErr := fetchGalleryFromHTML(ctx, resolved)
+		if htmlErr == nil {
+			return gallery, nil
+		}
+		log.Printf("HTML fallback failed (%v), trying public post archive", htmlErr)
+		return fetchGalleryFromArchive(ctx, resolved)
 	case http.StatusNotFound:
 		return nil, ErrPostNotFound
 	default:
@@ -287,6 +295,37 @@ func fetchGalleryFromHTML(ctx context.Context, resolved string) (*Gallery, error
 		return nil, ErrNoImages
 	}
 	return &Gallery{Title: title, Images: urls}, nil
+}
+func fetchGalleryFromArchive(ctx context.Context, resolved string) (*Gallery, error) {
+	u, err := url.Parse(resolved)
+	if err != nil {
+		return nil, err
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if len(parts) < 4 || parts[2] != "comments" {
+		return nil, ErrInvalidURL
+	}
+	req, err := redditRequest(ctx, "https://api.pullpush.io/reddit/search/submission/?ids="+url.QueryEscape(parts[3]), true)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("post archive status: %d", resp.StatusCode)
+	}
+	var data archivedResponse
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxJSONBytes)).Decode(&data); err != nil || len(data.Data) == 0 {
+		return nil, ErrPostNotFound
+	}
+	images := extractImages(data.Data[0])
+	if len(images) == 0 {
+		return nil, ErrNoImages
+	}
+	return &Gallery{Title: data.Data[0].Title, Images: images}, nil
 }
 
 func streamImage(ctx context.Context, rawURL string) (io.ReadCloser, string, error) {

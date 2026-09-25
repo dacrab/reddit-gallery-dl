@@ -8,6 +8,7 @@ A web tool to browse and download Reddit galleries — images, GIFs and videos �
 - **ZIP download** — stream selected media directly to a ZIP, no server buffering
 - **Smart rate limiting** — PRAW-style proactive throttling respects Reddit's API headers
 - **Zero external dependencies** — pure Go standard library
+- **Reddit access fallback** — uses a public post archive when Reddit blocks the JSON endpoint
 - **Dark/light mode** — persisted via localStorage
 - **Mobile friendly** — responsive grid, works on any screen size
 
