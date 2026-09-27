@@ -2,10 +2,33 @@ package main
 
 import (
 	"context"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
+}
+
+func testResponse(r *http.Request, status int, body string) *http.Response {
+	return &http.Response{
+		StatusCode: status,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader(body)),
+		Request:    r,
+	}
+}
+
+const embedGalleryFixture = `<h1>Gallery &amp; title</h1>
+<img src="https://preview.redd.it/example-title-v0-p4223x8lmp9c1.png?width=640&amp;auto=webp">
+<img srcset="https://preview.redd.it/example-title-v0-p4223x8lmp9c1.png?width=320 320w" src="https://preview.redd.it/example-title-v0-p4223x8lmp9c1.png?width=640">
+<img src="https://preview.redd.it/example-title-v0-ghlt58aqmp9c1.jpg?width=640">`
 
 func TestIsRedditHost(t *testing.T) {
 	tests := []struct {
@@ -236,11 +259,174 @@ func TestDoReddit_RateLimitRetry(t *testing.T) {
 		t.Errorf("expected 2 calls, got %d", calls)
 	}
 }
+func TestGalleryFromEmbedHTML(t *testing.T) {
+	got := galleryFromEmbedHTML(embedGalleryFixture)
+	if got == nil {
+		t.Fatal("galleryFromEmbedHTML returned nil")
+	}
+	if got.Title != "Gallery & title" {
+		t.Errorf("title = %q", got.Title)
+	}
+	if len(got.Images) != 2 {
+		t.Fatalf("got %d images, want 2: %v", len(got.Images), got.Images)
+	}
+	if got.Images[0] != "https://i.redd.it/p4223x8lmp9c1.png" {
+		t.Errorf("first image = %q", got.Images[0])
+	}
+	if got.Images[1] != "https://i.redd.it/ghlt58aqmp9c1.jpg" {
+		t.Errorf("second image = %q", got.Images[1])
+	}
+}
+
+func TestFetchGallery_UsesEmbedWhenJSONForbidden(t *testing.T) {
+	origClient := httpClient
+	httpClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		switch r.URL.Host {
+		case "www.reddit.com", "old.reddit.com", "api.reddit.com":
+			return testResponse(r, http.StatusForbidden, ""), nil
+		case "embed.reddit.com":
+			return testResponse(r, http.StatusOK, embedGalleryFixture), nil
+		default:
+			t.Fatalf("unexpected fallback request to %s", r.URL.Host)
+			return nil, nil
+		}
+	})}
+	defer func() { httpClient = origClient }()
+
+	got, err := fetchGallery(context.Background(), "https://www.reddit.com/r/pics/comments/abc123/title/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Images) != 2 {
+		t.Fatalf("got %d images, want 2", len(got.Images))
+	}
+}
+
+func TestFetchGallery_UsesAlternateArchive(t *testing.T) {
+	origClient := httpClient
+	httpClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		switch r.URL.Host {
+		case "www.reddit.com", "old.reddit.com", "api.reddit.com":
+			return testResponse(r, http.StatusForbidden, ""), nil
+		case "embed.reddit.com":
+			return testResponse(r, http.StatusOK, "<h1>No media</h1>"), nil
+		case "api.pullpush.io":
+			return testResponse(r, http.StatusServiceUnavailable, ""), nil
+		case "arctic-shift.photon-reddit.com":
+			return testResponse(r, http.StatusOK, `{"data":[{"title":"Archived gallery","is_gallery":true,"gallery_data":{"items":[{"media_id":"abc"}]},"media_metadata":{"abc":{"s":{"u":"https://i.redd.it/abc.jpg"}}}}]}`), nil
+		default:
+			t.Fatalf("unexpected fallback request to %s", r.URL.Host)
+			return nil, nil
+		}
+	})}
+	defer func() { httpClient = origClient }()
+
+	got, err := fetchGallery(context.Background(), "https://www.reddit.com/r/pics/comments/abc123/title/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Title != "Archived gallery" || len(got.Images) != 1 || got.Images[0] != "https://i.redd.it/abc.jpg" {
+		t.Fatalf("unexpected gallery: %+v", got)
+	}
+}
 
 func TestStripQuery(t *testing.T) {
 	got := stripQuery("https://v.redd.it/abc/DASH_720.mp4?source=fallback&extra=1")
 	want := "https://v.redd.it/abc/DASH_720.mp4"
 	if got != want {
 		t.Errorf("stripQuery = %q, want %q", got, want)
+	}
+}
+
+func TestFetchGallery_FallsBackWhenRateLimited(t *testing.T) {
+	origClient := httpClient
+	calls := 0
+	httpClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		switch r.URL.Host {
+		case "www.reddit.com":
+			calls++
+			if r.URL.Query().Get("raw_json") != "1" {
+				t.Errorf("expected raw_json=1 on public JSON request, got %q", r.URL.RawQuery)
+			}
+			resp := testResponse(r, http.StatusTooManyRequests, "")
+			resp.Header.Set("Retry-After", "1")
+			return resp, nil
+		case "old.reddit.com", "api.reddit.com":
+			return testResponse(r, http.StatusForbidden, ""), nil
+		case "embed.reddit.com":
+			return testResponse(r, http.StatusOK, embedGalleryFixture), nil
+		default:
+			t.Fatalf("unexpected fallback request to %s", r.URL.Host)
+			return nil, nil
+		}
+	})}
+	defer func() { httpClient = origClient }()
+
+	got, err := fetchGallery(context.Background(), "https://www.reddit.com/r/pics/comments/abc123/title/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Images) != 2 {
+		t.Fatalf("got %d images, want 2", len(got.Images))
+	}
+	if calls != 2 {
+		t.Errorf("expected 2 rate-limited JSON calls on www, got %d", calls)
+	}
+}
+
+func TestFetchGallery_BlockPageHTMLTriggersFallback(t *testing.T) {
+	origClient := httpClient
+	httpClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		switch r.URL.Host {
+		case "www.reddit.com", "old.reddit.com", "api.reddit.com":
+			// Reddit's WAF answers with an HTML block page under a 200 status.
+			return testResponse(r, http.StatusOK, "<!DOCTYPE html><html><body>Blocked</body></html>"), nil
+		case "embed.reddit.com":
+			return testResponse(r, http.StatusOK, embedGalleryFixture), nil
+		default:
+			t.Fatalf("unexpected fallback request to %s", r.URL.Host)
+			return nil, nil
+		}
+	})}
+	defer func() { httpClient = origClient }()
+
+	got, err := fetchGallery(context.Background(), "https://www.reddit.com/r/pics/comments/abc123/title/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Images) != 2 {
+		t.Fatalf("got %d images, want 2", len(got.Images))
+	}
+}
+
+func TestFetchGallery_AllSourcesBlockedReportsErrBlocked(t *testing.T) {
+	origClient := httpClient
+	httpClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if strings.HasSuffix(r.URL.Host, "reddit.com") {
+			return testResponse(r, http.StatusForbidden, ""), nil
+		}
+		return testResponse(r, http.StatusServiceUnavailable, ""), nil
+	})}
+	defer func() { httpClient = origClient }()
+
+	_, err := fetchGallery(context.Background(), "https://www.reddit.com/r/pics/comments/abc123/title/")
+	if !errors.Is(err, ErrBlocked) {
+		t.Errorf("err = %v, want ErrBlocked", err)
+	}
+}
+
+func TestFetchGallery_NotFoundSkipsFallbacks(t *testing.T) {
+	origClient := httpClient
+	httpClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Host != "www.reddit.com" {
+			t.Fatalf("unexpected fallback request to %s", r.URL.Host)
+		}
+		return testResponse(r, http.StatusNotFound, ""), nil
+	})}
+	defer func() { httpClient = origClient }()
+
+	_, err := fetchGallery(context.Background(), "https://www.reddit.com/r/pics/comments/abc123/title/")
+	if !errors.Is(err, ErrPostNotFound) {
+		t.Errorf("err = %v, want ErrPostNotFound", err)
 	}
 }

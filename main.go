@@ -34,7 +34,6 @@ func main() {
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}
-		close(errCh)
 	}()
 
 	quit := make(chan os.Signal, 1)
@@ -42,10 +41,7 @@ func main() {
 
 	select {
 	case err := <-errCh:
-		if err != nil {
-			log.Fatal(err)
-		}
-		return
+		log.Fatal(err)
 	case <-quit:
 	}
 	log.Print("Shutting down...")

@@ -4,13 +4,12 @@ A web tool to browse and download Reddit galleries — images, GIFs and videos �
 
 ## Features
 
-- **Gallery support** — multi-image posts, GIFs, Reddit-hosted videos (`v.redd.it`)
-- **ZIP download** — stream selected media directly to a ZIP, no server buffering
-- **Rate-limit handling** — retries transient Reddit rate limits using the server-provided delay
+- **No Reddit account or API keys needed**
+- **Gallery support** — multi-image posts, GIFs, and Reddit-hosted videos
+- **ZIP download** — pick what you want and download it in one click
+- **Built-in fallbacks** — keeps working even when Reddit blocks the server
 - **Zero external dependencies** — pure Go standard library
-- **Reddit access fallback** — uses a public post archive when Reddit blocks the JSON endpoint
-- **Dark/light mode** — persisted via localStorage
-- **Mobile friendly** — responsive grid, works on any screen size
+- **Dark/light mode** and a mobile-friendly layout
 
 ## Quick Start
 
@@ -34,12 +33,12 @@ Deployed on [Render](https://render.com) via the `Dockerfile`. Set the `PORT` en
 
 | File | Purpose |
 |---|---|
-| `main.go` | HTTP server setup, lifecycle, and graceful shutdown |
-| `reddit.go` | Reddit/archive clients, media extraction, and URL utilities |
-| `handlers.go` | HTTP handlers, ZIP streaming, and error mapping |
+| `main.go` | HTTP server setup and lifecycle |
+| `reddit.go` | Fetching Reddit posts and extracting media |
+| `handlers.go` | HTTP handlers and ZIP streaming |
 | `templates/` | Server-rendered page and browser behavior |
 | `static/` | Served browser assets |
-| `*_test.go` | HTTP, extraction, and utility regression tests |
+| `*_test.go` | Regression tests |
 
 ## License
 

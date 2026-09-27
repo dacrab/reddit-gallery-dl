@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"html/template"
 	"net/http"
 	"net/http/httptest"
@@ -155,6 +156,7 @@ func TestAlertForError(t *testing.T) {
 		{ErrPostNotFound, "warning"},
 		{ErrNoImages, "info"},
 		{ErrRateLimited, "warning"},
+		{fmt.Errorf("%w: some detail", ErrBlocked), "danger"},
 	}
 	for _, tt := range tests {
 		a := alertForError(tt.err)

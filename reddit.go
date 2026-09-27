@@ -29,6 +29,7 @@ var (
 	ErrNoImages      = errors.New("no images found in post")
 	ErrRateLimited   = errors.New("reddit is rate limiting requests")
 	ErrImageTooLarge = errors.New("image exceeds maximum allowed size")
+	ErrBlocked       = errors.New("reddit and all public fallbacks blocked or unavailable")
 )
 
 // httpClient, noRedirectClient, and dlSem are package-level to keep the code
@@ -151,54 +152,100 @@ func redditRequest(ctx context.Context, rawURL string, acceptJSON bool) (*http.R
 	return req, nil
 }
 
+// doReddit performs a GET against Reddit's public, unauthenticated endpoints
+// and transparently retries once when Reddit rate limits us with HTTP 429.
 func doReddit(ctx context.Context, rawURL string) (*http.Response, error) {
-	req, err := redditRequest(ctx, rawURL, true)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode != http.StatusTooManyRequests {
-		return resp, nil
-	}
-	_ = resp.Body.Close()
-
-	wait := 2 * time.Second
-	if ra := resp.Header.Get("Retry-After"); ra != "" {
-		if secs, err := strconv.Atoi(ra); err == nil && secs > 0 && secs <= 10 {
+	for attempt := 0; ; attempt++ {
+		req, err := redditRequest(ctx, rawURL, true)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := httpClient.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		if resp.StatusCode != http.StatusTooManyRequests {
+			return resp, nil
+		}
+		_ = resp.Body.Close()
+		if attempt > 0 {
+			return nil, ErrRateLimited
+		}
+		wait := 2 * time.Second
+		if secs, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil && secs > 0 && secs <= 10 {
 			wait = time.Duration(secs) * time.Second
 		}
+		log.Printf("Rate limited, retrying in %v", wait)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(wait):
+		}
 	}
-	log.Printf("Rate limited, retrying in %v", wait)
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case <-time.After(wait):
-	}
-
-	req, err = redditRequest(ctx, rawURL, true)
-	if err != nil {
-		return nil, err
-	}
-	resp, err = httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode == http.StatusTooManyRequests {
-		_ = resp.Body.Close()
-		return nil, ErrRateLimited
-	}
-	return resp, nil
 }
 
+// fetchGallery resolves a post URL and extracts its media without any Reddit
+// account or app credentials: it first tries Reddit's public JSON endpoint and,
+// whenever Reddit blocks or rate limits the anonymous request, falls back to
+// other public sources that do not require authentication.
 func fetchGallery(ctx context.Context, postURL string) (*gallery, error) {
 	resolved, err := resolveURL(ctx, postURL)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := doReddit(ctx, strings.TrimRight(resolved, "/")+".json")
+
+	gallery, err := fetchGalleryFromJSON(ctx, resolved)
+	if err == nil {
+		return gallery, nil
+	}
+	// A deleted post or a media-less post will not show up in any fallback source.
+	if errors.Is(err, ErrPostNotFound) || errors.Is(err, ErrNoImages) {
+		return nil, err
+	}
+
+	log.Printf("reddit JSON unavailable (%v), trying no-auth fallbacks for %s", err, resolved)
+	errs := []error{err}
+	for _, fallback := range galleryFallbacks {
+		gallery, fallbackErr := fallback.fetch(ctx, resolved)
+		if fallbackErr == nil {
+			return gallery, nil
+		}
+		errs = append(errs, fmt.Errorf("%s: %w", fallback.name, fallbackErr))
+	}
+	return nil, fmt.Errorf("%w: %w", ErrBlocked, errors.Join(errs...))
+}
+
+// redditJSONHosts all serve the same public, unauthenticated post JSON.
+// Reddit's bot filters sometimes block one host but not the others, so every
+// host is tried before giving up on Reddit itself.
+var redditJSONHosts = []string{"www.reddit.com", "old.reddit.com", "api.reddit.com"}
+
+func fetchGalleryFromJSON(ctx context.Context, resolved string) (*gallery, error) {
+	u, err := url.Parse(resolved)
+	if err != nil {
+		return nil, err
+	}
+	var errs []error
+	for _, host := range redditJSONHosts {
+		u.Host = host
+		gallery, err := fetchGalleryFromRedditHost(ctx, u.String())
+		if err == nil {
+			return gallery, nil
+		}
+		// A deleted post or a media-less post behaves identically on every host.
+		if errors.Is(err, ErrPostNotFound) || errors.Is(err, ErrNoImages) {
+			return nil, err
+		}
+		errs = append(errs, fmt.Errorf("%s: %w", host, err))
+	}
+	return nil, errors.Join(errs...)
+}
+
+func fetchGalleryFromRedditHost(ctx context.Context, resolved string) (*gallery, error) {
+	// raw_json=1 asks Reddit for unescaped media URLs; the endpoint is public
+	// and needs no OAuth token, client id, or account.
+	endpoint := strings.TrimRight(resolved, "/") + ".json?raw_json=1"
+	resp, err := doReddit(ctx, endpoint)
 	if err != nil {
 		return nil, err
 	}
@@ -207,23 +254,33 @@ func fetchGallery(ctx context.Context, postURL string) (*gallery, error) {
 	switch resp.StatusCode {
 	case http.StatusOK:
 		var data redditResponse
-		if err := json.NewDecoder(io.LimitReader(resp.Body, maxJSONBytes)).Decode(&data); err != nil || len(data) == 0 || len(data[0].Data.Children) == 0 {
+		if err := json.NewDecoder(io.LimitReader(resp.Body, maxJSONBytes)).Decode(&data); err != nil {
+			// A 200 response that is not JSON is Reddit's WAF serving a block
+			// or interstitial page, so treat it like any other block.
+			return nil, errors.New("got a non-JSON response (likely a block page)")
+		}
+		if len(data) == 0 || len(data[0].Data.Children) == 0 {
 			return nil, ErrPostNotFound
 		}
 		return galleryFromPost(data[0].Data.Children[0].Data)
-	case http.StatusForbidden:
-		log.Printf("JSON API returned 403, falling back to HTML scrape: %s", resolved)
-		gallery, htmlErr := fetchGalleryFromHTML(ctx, resolved)
-		if htmlErr == nil {
-			return gallery, nil
-		}
-		log.Printf("HTML fallback failed (%v), trying public post archive", htmlErr)
-		return fetchGalleryFromArchive(ctx, resolved)
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return nil, fmt.Errorf("reddit blocked anonymous access (status %d)", resp.StatusCode)
 	case http.StatusNotFound:
 		return nil, ErrPostNotFound
 	default:
 		return nil, fmt.Errorf("reddit api status: %d", resp.StatusCode)
 	}
+}
+
+// galleryFallbacks are public, no-auth media sources tried in order when
+// Reddit blocks the anonymous JSON API (rate limits, 401/403, outages).
+var galleryFallbacks = []struct {
+	name  string
+	fetch func(context.Context, string) (*gallery, error)
+}{
+	{"embed.reddit.com", fetchGalleryFromEmbed},
+	{"pullpush.io", fetchGalleryFromPullPush},
+	{"arctic-shift", fetchGalleryFromArcticShift},
 }
 
 func galleryFromPost(post redditPost) (*gallery, error) {
@@ -235,19 +292,20 @@ func galleryFromPost(post redditPost) (*gallery, error) {
 }
 
 var (
-	rxTitle      = regexp.MustCompile(`<title>([^<]+)`)
-	rxMediaIDs   = regexp.MustCompile(`data-media-ids="([^"]+)"`)
-	rxPreviewExt = regexp.MustCompile(`preview\.redd\.it/([^\.?]+)\.([a-z0-9]+)`)
-	rxDataURL    = regexp.MustCompile(`data-url="([^"]+)"`)
+	rxEmbedTitle     = regexp.MustCompile(`(?is)<h1[^>]*>(.*?)</h1>`)
+	rxHTMLTag        = regexp.MustCompile(`(?s)<[^>]+>`)
+	rxEmbedVideo     = regexp.MustCompile(`https://v\.redd\.it/[a-z0-9._/-]+`)
+	rxEmbedImage     = regexp.MustCompile(`https://(?:i|preview)\.redd\.it/[a-z0-9._-]+`)
+	rxPreviewMediaID = regexp.MustCompile(`-v[0-9]+-([a-z0-9]+)(\.[a-z0-9]+)$`)
 )
 
-func fetchGalleryFromHTML(ctx context.Context, resolved string) (*gallery, error) {
+func fetchGalleryFromEmbed(ctx context.Context, resolved string) (*gallery, error) {
 	u, err := url.Parse(resolved)
 	if err != nil {
 		return nil, err
 	}
-	htmlURL := "https://old.reddit.com" + strings.TrimRight(u.Path, "/") + "/"
-	req, err := redditRequest(ctx, htmlURL, false)
+	embedURL := "https://embed.reddit.com" + strings.TrimRight(u.Path, "/") + "/"
+	req, err := redditRequest(ctx, embedURL, false)
 	if err != nil {
 		return nil, err
 	}
@@ -259,65 +317,87 @@ func fetchGalleryFromHTML(ctx context.Context, resolved string) (*gallery, error
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusForbidden {
+	if resp.StatusCode == http.StatusNotFound {
 		return nil, ErrPostNotFound
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("old.reddit.com status: %d", resp.StatusCode)
+		return nil, fmt.Errorf("embed.reddit.com status: %d", resp.StatusCode)
 	}
 
 	b, err := io.ReadAll(io.LimitReader(resp.Body, maxJSONBytes))
 	if err != nil {
 		return nil, err
 	}
-	page := string(b)
+	gallery := galleryFromEmbedHTML(string(b))
+	if gallery == nil {
+		return nil, ErrNoImages
+	}
+	return gallery, nil
+}
 
+func galleryFromEmbedHTML(page string) *gallery {
 	title := ""
-	if m := rxTitle.FindStringSubmatch(page); len(m) > 1 {
-		title = m[1]
-		if idx := strings.LastIndex(title, " : "); idx > 0 {
-			title = title[:idx]
-		}
+	if m := rxEmbedTitle.FindStringSubmatch(page); len(m) > 1 {
+		title = strings.Join(strings.Fields(html.UnescapeString(rxHTMLTag.ReplaceAllString(m[1], " "))), " ")
 	}
 
 	var urls []string
-	if strings.Contains(page, `data-is-gallery="true"`) {
-		idsStr := ""
-		if m := rxMediaIDs.FindStringSubmatch(page); len(m) > 1 {
-			idsStr = m[1]
-		}
-		if idsStr != "" {
-			ext := map[string]string{}
-			for _, m := range rxPreviewExt.FindAllStringSubmatch(page, -1) {
-				ext[m[1]] = "." + m[2]
-			}
-			for _, id := range strings.Split(idsStr, ",") {
-				id = strings.TrimSpace(id)
-				if e, ok := ext[id]; ok {
-					urls = append(urls, "https://i.redd.it/"+id+e)
-				}
-			}
-		}
-	} else if m := rxDataURL.FindStringSubmatch(page); len(m) > 1 && m[1] != "" {
-		urls = []string{html.UnescapeString(m[1])}
+	for _, videoURL := range rxEmbedVideo.FindAllString(page, -1) {
+		urls = appendUniqueEmbedURL(urls, videoURL)
 	}
-
 	if len(urls) == 0 {
-		return nil, ErrNoImages
+		for _, rawURL := range rxEmbedImage.FindAllString(page, -1) {
+			if id := rxPreviewMediaID.FindStringSubmatch(rawURL); len(id) == 3 {
+				rawURL = "https://i.redd.it/" + id[1] + id[2]
+			}
+			urls = appendUniqueEmbedURL(urls, rawURL)
+		}
 	}
-	return &gallery{Title: title, Images: urls}, nil
+	if len(urls) == 0 {
+		return nil
+	}
+	return &gallery{Title: title, Images: urls}
 }
 
-func fetchGalleryFromArchive(ctx context.Context, resolved string) (*gallery, error) {
+func appendUniqueEmbedURL(urls []string, rawURL string) []string {
+	for _, existing := range urls {
+		if existing == rawURL {
+			return urls
+		}
+	}
+	return append(urls, rawURL)
+}
+
+func postIDFromURL(resolved string) (string, error) {
 	u, err := url.Parse(resolved)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
 	if len(parts) < 4 || parts[2] != "comments" {
-		return nil, ErrInvalidURL
+		return "", ErrInvalidURL
 	}
-	req, err := redditRequest(ctx, "https://api.pullpush.io/reddit/search/submission/?ids="+url.QueryEscape(parts[3]), true)
+	return parts[3], nil
+}
+
+func fetchGalleryFromPullPush(ctx context.Context, resolved string) (*gallery, error) {
+	return fetchGalleryFromArchive(ctx, resolved, "https://api.pullpush.io/reddit/search/submission/?ids=")
+}
+
+func fetchGalleryFromArcticShift(ctx context.Context, resolved string) (*gallery, error) {
+	return fetchGalleryFromArchive(ctx, resolved, "https://arctic-shift.photon-reddit.com/api/posts/ids?ids=")
+}
+
+func fetchGalleryFromArchive(ctx context.Context, resolved, endpointBase string) (*gallery, error) {
+	postID, err := postIDFromURL(resolved)
+	if err != nil {
+		return nil, err
+	}
+	return fetchGalleryFromArchiveSource(ctx, endpointBase+url.QueryEscape(postID))
+}
+
+func fetchGalleryFromArchiveSource(ctx context.Context, endpoint string) (*gallery, error) {
+	req, err := redditRequest(ctx, endpoint, true)
 	if err != nil {
 		return nil, err
 	}
@@ -326,6 +406,7 @@ func fetchGalleryFromArchive(ctx context.Context, resolved string) (*gallery, er
 		return nil, err
 	}
 	defer resp.Body.Close()
+
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("post archive status: %d", resp.StatusCode)
 	}

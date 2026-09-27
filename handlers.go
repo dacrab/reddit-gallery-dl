@@ -94,6 +94,8 @@ func alertForError(err error) *alert {
 		return &alert{Message: "This post exists but has no images.", Type: "info"}
 	case errors.Is(err, ErrRateLimited):
 		return &alert{Message: "Reddit is rate limiting requests. Please wait a moment and try again.", Type: "warning"}
+	case errors.Is(err, ErrBlocked):
+		return &alert{Message: "Reddit and its public fallbacks are blocking this server right now. Please try again in a minute — if it persists, check the server logs for details.", Type: "danger"}
 	default:
 		return &alert{Message: "Something went wrong. Please try again.", Type: "danger"}
 	}
