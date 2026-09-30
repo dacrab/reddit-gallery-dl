@@ -13,7 +13,9 @@ import (
 )
 
 func main() {
-	tmpl := template.Must(template.New("").Funcs(template.FuncMap{"urlExt": urlExt}).ParseGlob("templates/*.html"))
+	tmpl := template.Must(template.New("").
+		Funcs(template.FuncMap{"urlExt": urlExt}).
+		ParseGlob("templates/*.html"))
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -21,11 +23,14 @@ func main() {
 	}
 
 	srv := &http.Server{
-		Addr:         ":" + port,
-		Handler:      routes(tmpl),
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 5 * time.Minute,
-		IdleTimeout:  60 * time.Second,
+		Addr:              ":" + port,
+		Handler:           routes(tmpl, NewFetcher()),
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		// No WriteTimeout: a large gallery streamed through a slow client can
+		// legitimately take minutes, and a deadline here truncates downloads
+		// that were going fine. Per-request contexts already bound the work.
+		IdleTimeout: 60 * time.Second,
 	}
 
 	errCh := make(chan error, 1)
