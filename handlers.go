@@ -77,8 +77,7 @@ func alertForError(err error) *alert {
 	// Order matters. ErrUnavailable wraps the joined per-source errors, and
 	// those often include ErrPostNotFound from an archive that simply has not
 	// indexed the post. Checking "deleted" first would tell a user their post
-	// is gone when the truth is that we were blocked, which is the same mistake
-	// this tool used to make on every request.
+	// is gone when the truth is that we were blocked.
 	switch {
 	case errors.Is(err, ErrInvalidURL):
 		return &alert{Message: "That doesn't look like a valid Reddit link.", Type: "warning"}

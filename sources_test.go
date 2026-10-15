@@ -9,7 +9,6 @@ import (
 	"os"
 	"strings"
 	"testing"
-	"time"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -401,22 +400,9 @@ func TestRedirectGuard(t *testing.T) {
 	}
 }
 
-func TestLimitedImageBodyRejectsOversize(t *testing.T) {
-	body := &limitedImageBody{
-		body:      io.NopCloser(strings.NewReader(strings.Repeat("x", 100))),
-		remaining: 10,
-	}
-	if _, err := io.ReadAll(body); !errors.Is(err, ErrImageTooLarge) {
-		t.Errorf("err = %v, want ErrImageTooLarge", err)
-	}
-}
-
-// TestMediaRequestsAdvertiseAnImage pins the Accept header used for media.
-//
-// Asking Reddit for text/html when fetching an image makes it answer 307 with a
-// redirect to www.reddit.com/media instead of serving the file from its CDN.
-// That still "works" if the redirect guard is permissive, but it routes every
-// image through a proxy, and it breaks outright the moment the guard is tight.
+// TestMediaRequestsAdvertiseAnImage pins the Accept header used for media:
+// asking for text/html makes Reddit 307 to its /media proxy instead of serving
+// the file from its CDN.
 func TestMediaRequestsAdvertiseAnImage(t *testing.T) {
 	var accept string
 	f := testFetcher(roundTripFunc(func(r *http.Request) (*http.Response, error) {
@@ -455,9 +441,7 @@ func TestMediaRedirectMayUseRedditsMediaProxy(t *testing.T) {
 //
 // embed.reddit.com/comments/<id>/ answers HTTP 200 with a "Page not found" body
 // and no media, so a slug-free request looks like a success while returning an
-// empty gallery. The subreddit has to be in the path. This test disables the
-// other rungs on purpose: with rung 1 answering, a broken embed rung is
-// invisible, which is exactly how it nearly shipped.
+// empty gallery. The subreddit has to be in the path.
 func TestEmbedRungAsksForTheSubreddit(t *testing.T) {
 	var embedPath string
 	f := testFetcher(roundTripFunc(func(r *http.Request) (*http.Response, error) {
@@ -521,32 +505,5 @@ func TestSubredditOf(t *testing.T) {
 		if subredditOf(s) != "" {
 			t.Errorf("subredditOf(%q) = %q, want it dropped", s, subredditOf(s))
 		}
-	}
-}
-
-// TestDownloadSlotIsHeldUntilTheStreamEnds checks that the concurrency cap
-// actually caps concurrency. Releasing the slot when the response headers
-// arrive would let every request take a slot, drop it at once, and then read
-// multi-megabyte images concurrently with no limit at all.
-func TestDownloadSlotIsHeldUntilTheStreamEnds(t *testing.T) {
-	f := NewFetcher()
-	f.mediaClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		return testResponse(r, http.StatusOK, "BYTES"), nil
-	})}
-
-	// Fill every slot and hold the bodies open.
-	for i := 0; i < maxParallelDownloads; i++ {
-		if _, _, err := f.streamImage(context.Background(), "https://i.redd.it/a.jpg"); err != nil {
-			t.Fatalf("stream %d: %v", i, err)
-		}
-	}
-	// The next request must block, because no slot was released.
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-	if _, _, err := f.streamImage(ctx, "https://i.redd.it/a.jpg"); !errors.Is(err, context.DeadlineExceeded) {
-		t.Errorf("err = %v, want the request to block until a slot frees", err)
-	}
-	if got := len(f.downloadSem); got != maxParallelDownloads {
-		t.Errorf("%d slots in use, want %d", got, maxParallelDownloads)
 	}
 }

@@ -7,12 +7,10 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"maps"
 	"mime"
 	"net/http"
 	"net/url"
 	"path"
-	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -26,10 +24,10 @@ const (
 	maxParallelDownloads = 8
 )
 
-// download is the outcome for one selected image: either an open body to write,
-// or the error that ended it. Failures travel down the same channel as successes
-// because the writer needs to know about them to stop waiting for an index that
-// is never going to arrive.
+// download is the outcome for one selected image: an open body to write, or
+// the error that ended it. Failures travel down the same channel as successes
+// because the writer needs to know about them to stop waiting for an index
+// that is never going to arrive.
 type download struct {
 	index int
 	url   string
@@ -96,16 +94,11 @@ func streamZip(ctx context.Context, f *Fetcher, w http.ResponseWriter, title str
 		}
 	}()
 
-	// Buffered to the full width so no worker can block on a slow consumer,
-	// which keeps cancellation from deadlocking the handler.
+	// Buffered to the full width so no worker can block on a slow consumer.
 	results := make(chan download, len(urls))
 
-	// A fixed pool, not a goroutine per URL. A goroutine per URL combined with a
-	// process-wide concurrency cap deadlocks: the writers that hold slots are
-	// waiting for the lowest index, and the goroutine that owns the lowest index
-	// is waiting for a slot. A pool keeps the lowest unfinished index always in
-	// flight, so the writer is never blocked on something that cannot arrive.
-	// It also bounds how many bodies are open at once, and therefore memory.
+	// A fixed pool, not a goroutine per URL: it bounds how many bodies are
+	// open at once, and the writer re-orders outcomes below.
 	workers := min(maxParallelDownloads, len(urls))
 	var nextIndex int64
 	var wg sync.WaitGroup
@@ -156,44 +149,24 @@ func streamZip(ctx context.Context, f *Fetcher, w http.ResponseWriter, title str
 		}
 	}
 
-	// Hold finished-but-not-yet-writable downloads until their turn comes, so
-	// the archive is numbered in selection order.
+	// Outcomes may arrive in any order. Hold early ones until their turn comes
+	// and skip failed indexes, so the written archive is numbered in selection
+	// order with no gaps.
 	pending := make(map[int]download)
-	failed := make(map[int]bool)
 	next := 0
-	drain := func() {
+	for d := range results {
+		pending[d.index] = d
 		for {
-			if failed[next] {
-				delete(failed, next)
-				next++
-				continue
-			}
-			d, ok := pending[next]
+			p, ok := pending[next]
 			if !ok {
-				return
+				break
 			}
 			delete(pending, next)
-			write(d)
 			next++
+			if p.err == nil {
+				write(p)
+			}
 		}
-	}
-
-	for d := range results {
-		if d.err != nil {
-			failed[d.index] = true
-		} else {
-			pending[d.index] = d
-		}
-		drain()
-	}
-
-	// Every index reports exactly one outcome, so the loop above walks the whole
-	// sequence and nothing is left here. This is a safety net: silently dropping
-	// images is the failure this function exists to prevent, so anything that
-	// does reach it gets written and logged rather than discarded.
-	for _, index := range slices.Sorted(maps.Keys(pending)) {
-		log.Printf("zip: image %d was never written in order, appending out of sequence", index)
-		write(pending[index])
 	}
 }
 

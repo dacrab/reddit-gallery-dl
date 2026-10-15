@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -142,11 +143,9 @@ func TestIsPostID(t *testing.T) {
 			t.Errorf("isPostID(%q) = false, want true", s)
 		}
 	}
-	for _, s := range []string{"", "ab", "..", "a/b", "a b", "a?b", "a#b", strings30} {
+	for _, s := range []string{"", "ab", "..", "a/b", "a b", "a?b", "a#b", strings.Repeat("x", 21)} {
 		if isPostID(s) {
 			t.Errorf("isPostID(%q) = true, want false", s)
 		}
 	}
 }
-
-const strings30 = "0123456789012345678901234567890123456789"

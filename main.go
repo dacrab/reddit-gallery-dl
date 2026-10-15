@@ -28,8 +28,7 @@ func main() {
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		// No WriteTimeout: a large gallery streamed through a slow client can
-		// legitimately take minutes, and a deadline here truncates downloads
-		// that were going fine. Per-request contexts already bound the work.
+		// legitimately take minutes, and per-request contexts bound the work.
 		IdleTimeout: 60 * time.Second,
 	}
 

@@ -8,10 +8,8 @@ import (
 	"strings"
 )
 
-// redditPost is the subset of Reddit's post JSON this tool needs. Every source
-// in the fallback ladder is normalised into this one shape before extraction,
-// so media extraction has a single implementation to keep correct instead of
-// one per source.
+// redditPost is the subset of Reddit's post JSON this tool needs: every source
+// in the fallback ladder is normalised into this one shape before extraction.
 type redditPost struct {
 	Title     string `json:"title"`
 	IsGallery bool   `json:"is_gallery"`
@@ -80,11 +78,9 @@ type gallery struct {
 
 // extractImages pulls downloadable media out of a post.
 //
-// The candidate groups are ordered by how faithful they are, not by how often
-// they are hit: a gallery's media_metadata carries the original upload, while
-// preview.images carries a re-encoded, downscaled copy. Trying preview first
-// silently handed users a smaller file than the one they asked for, so the
-// preview is now the last resort and only for posts with nothing better.
+// The candidate groups are ordered by fidelity: a gallery's media_metadata
+// carries the original upload, while preview.images carries a re-encoded,
+// downscaled copy, so the preview is the last resort.
 func extractImages(post redditPost) []string {
 	groups := [][]string{
 		galleryImages(post),
@@ -138,8 +134,8 @@ func videoImages(post redditPost) []string {
 }
 
 // directImages is the post's own link, which for an image post is the original
-// upload. It is filtered to Reddit hosts downstream, so a post linking somewhere
-// external falls through to its Reddit-hosted preview instead.
+// upload. redditMediaURLs filters it to Reddit hosts, so a post linking
+// somewhere external falls through to its Reddit-hosted preview instead.
 func directImages(post redditPost) []string {
 	if post.URL == "" {
 		return nil
@@ -173,9 +169,7 @@ func previewImages(post redditPost) []string {
 // Reddit-hosted media, and deduplicates.
 //
 // The host filter is the second half of the download endpoint's SSRF defence
-// (the first being isRedditMediaHost at fetch time). Because every URL that
-// reaches the browser has already been through here, the browser cannot talk
-// the server into fetching an address it should not.
+// (the first being isRedditMediaHost at fetch time).
 func redditMediaURLs(candidates []string) []string {
 	var urls []string
 	for _, candidate := range candidates {
@@ -194,18 +188,13 @@ func redditMediaURLs(candidates []string) []string {
 	return urls
 }
 
-// originalURL rewrites a preview.redd.it URL to the equivalent i.redd.it URL.
+// originalURL rewrites a preview.redd.it URL to the equivalent i.redd.it URL,
+// because preview.redd.it serves a re-encoded, downscaled copy while
+// i.redd.it is the untouched upload — both name the same media ID.
 //
-// Reddit's metadata and its embed page both point at
-// preview.redd.it?width=...&auto=webp, which has the right dimensions but is a
-// re-encoded copy. i.redd.it is the untouched upload; on live posts the gap
-// between the two reached 13% of file size, and the conversion is lossless
-// because both URLs name the same media ID.
-//
-// Two path shapes have to be handled. Post JSON gives a bare media ID
-// ("/4hpo47nlimsh1.jpg"), while the embed page prefixes the post slug
-// ("/my-post-title-v0-4hpo47nlimsh1.jpg"). In both the media ID is the final
-// hyphen-separated segment.
+// The media ID is the final hyphen-separated segment of the path: post JSON
+// gives a bare ID ("/4hpo47nlimsh1.jpg"), while the embed page prefixes the
+// post slug ("/my-post-title-v0-4hpo47nlimsh1.jpg").
 func originalURL(raw string) string {
 	u, err := url.Parse(raw)
 	if err != nil || !strings.EqualFold(u.Host, "preview.redd.it") {
@@ -261,9 +250,8 @@ func urlExt(rawURL string) string {
 }
 
 var imageExts = map[string]bool{
-	".png": true, ".gif": true, ".gifv": true, ".jpg": true, ".jpeg": true,
-	".webp": true, ".avif": true, ".bmp": true, ".mp4": true, ".webm": true,
-	".mov": true,
+	".png": true, ".gif": true, ".jpg": true, ".jpeg": true, ".webp": true,
+	".avif": true, ".mp4": true, ".webm": true, ".mov": true,
 }
 
 // detectExtension picks a filename extension for a downloaded image, trusting

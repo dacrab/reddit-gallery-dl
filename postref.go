@@ -13,8 +13,8 @@ var ErrInvalidURL = errors.New("invalid reddit url")
 //
 // This is the security boundary for every user-supplied URL, so it is
 // deliberately fail-closed: it matches whole labels only, which rejects
-// "evil-reddit.com", "i.redd.it.evil.com" and trailing-dot bypasses, and it
-// rejects IP literals, so a bare address can never satisfy it.
+// "evil-reddit.com", "i.redd.it.evil.com" and trailing-dot bypasses, and IP
+// literals can never satisfy it.
 func isRedditHost(host string) bool {
 	host = strings.ToLower(host)
 	return host == "reddit.com" || host == "redd.it" ||
@@ -23,17 +23,14 @@ func isRedditHost(host string) bool {
 }
 
 // isRedditMediaHost reports whether host serves Reddit-hosted media, and is
-// therefore the only thing the download endpoint may fetch on a user's behalf.
+// therefore the only host the download endpoint may fetch on a user's behalf.
 func isRedditMediaHost(host string) bool {
 	return strings.HasSuffix(strings.ToLower(host), ".redd.it")
 }
 
-// postRef identifies a post.
-//
-// subreddit is carried alongside the ID because Reddit's embed endpoint needs it
-// in the request path. Links that do not name a subreddit, such as redd.it
-// shortlinks, leave it empty; sources that require it report that and let the
-// ladder move on.
+// postRef identifies a post. subreddit is carried alongside the ID because
+// Reddit's embed endpoint needs it in the request path; links that do not name
+// a subreddit, such as redd.it shortlinks, leave it empty.
 type postRef struct {
 	postID    string
 	subreddit string
@@ -49,7 +46,6 @@ type link struct {
 // parseLink normalises the many shapes a Reddit link arrives in — pasted
 // without a scheme, shared from the mobile app as /gallery/<id>, shortened to
 // redd.it/<id>, or carrying a share code — into a single post identity.
-//
 // It performs no I/O, so every accepted shape is covered by table tests.
 func parseLink(input string) (link, error) {
 	raw := strings.TrimSpace(input)
@@ -118,9 +114,9 @@ func subredditOf(s string) string {
 	return s
 }
 
-// isPostID reports whether s has the shape of a Reddit base-36 post ID. It is a
-// sanity check rather than a lookup: it keeps junk and traversal attempts out of
-// the request paths built from user input.
+// isPostID reports whether s has the shape of a Reddit base-36 post ID. It
+// keeps junk and traversal attempts out of the request paths built from user
+// input.
 func isPostID(s string) bool {
 	if len(s) < 4 || len(s) > 20 {
 		return false

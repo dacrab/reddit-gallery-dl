@@ -11,19 +11,17 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
-	"sync"
 	"time"
 )
 
 const (
 	maxJSONBytes = 2 * 1024 * 1024
 	maxPageBytes = 8 * 1024 * 1024
-	maxImageSize = 50 * 1024 * 1024
 	userAgent    = "golang:reddit-gallery-dl:v1.0.0 (by /u/reddit-gallery-dl)"
 )
 
-// Accept headers are per-request-type and not interchangeable. Asking for
-// text/html when fetching an image makes Reddit 307 the request to
+// Accept headers are per-request-type, not interchangeable: asking Reddit for
+// text/html when fetching an image makes it answer 307 with a redirect to
 // www.reddit.com/media instead of serving the file from its CDN, so media
 // requests have to advertise that they want an image.
 const (
@@ -33,29 +31,22 @@ const (
 )
 
 var (
-	ErrPostNotFound  = errors.New("post not found or deleted")
-	ErrNoMedia       = errors.New("post has no downloadable media")
-	ErrUnavailable   = errors.New("no source could load this post")
-	ErrImageTooLarge = errors.New("image exceeds maximum allowed size")
+	ErrPostNotFound = errors.New("post not found or deleted")
+	ErrNoMedia      = errors.New("post has no downloadable media")
+	ErrUnavailable  = errors.New("no source could load this post")
 )
 
-// shareHosts are tried in turn to resolve a /r/<sub>/s/<code> link. Reddit's
-// per-host defences differ, so one host refusing a share link says little about
-// the others.
+// shareHosts are tried in turn to resolve a /r/<sub>/s/<code> link: Reddit's
+// per-host defences differ, so one host refusing a share link says little
+// about the others.
 var shareHosts = []string{"www.reddit.com", "old.reddit.com", "embed.reddit.com"}
 
-// Fetcher loads posts and media. It owns its HTTP clients so that tests can
-// inject transports instead of mutating package-level state, which is what
-// previously made every test in this repository unparallelisable.
+// Fetcher loads posts and media. It owns its HTTP clients so tests can inject
+// transports instead of mutating package-level state.
 type Fetcher struct {
 	client      *http.Client
 	noRedirect  *http.Client
 	mediaClient *http.Client
-
-	// downloadSem caps image downloads across the whole process, so a handful of
-	// concurrent archive requests cannot exhaust file descriptors or upstream
-	// rate limits.
-	downloadSem chan struct{}
 }
 
 func NewFetcher() *Fetcher {
@@ -74,16 +65,14 @@ func NewFetcher() *Fetcher {
 	return &Fetcher{
 		client:     &http.Client{Timeout: 30 * time.Second, Transport: transport(), CheckRedirect: guardRedirect(isRedditHost)},
 		noRedirect: &http.Client{Timeout: 10 * time.Second, Transport: transport(), CheckRedirect: refuseRedirect},
-		// The first hop must be a media host, but a redirect may legitimately
-		// land on www.reddit.com, which proxies media through /media. The
-		// property that matters is that the chain never leaves Reddit.
+		// Media may redirect to www.reddit.com/media, which proxies the file;
+		// the property that matters is that the chain never leaves Reddit.
 		mediaClient: &http.Client{Timeout: 60 * time.Second, Transport: transport(), CheckRedirect: guardRedirect(isRedditHost)},
-		downloadSem: make(chan struct{}, maxParallelDownloads),
 	}
 }
 
 // guardRedirect returns a CheckRedirect that re-checks every hop against a host
-// predicate. Redirects are followed blindly otherwise, which is enough to walk
+// predicate. Redirects are otherwise followed blindly, which is enough to walk
 // a request straight back out to an internal address.
 func guardRedirect(allow func(string) bool) func(*http.Request, []*http.Request) error {
 	return func(req *http.Request, via []*http.Request) error {
@@ -110,23 +99,18 @@ func (f *Fetcher) newRequest(ctx context.Context, rawURL, accept string) (*http.
 	return req, nil
 }
 
-// source is one way of loading a post. Every source returns a gallery, a
-// definitive ErrNoMedia when it positively read the post and found nothing
-// downloadable, or an inconclusive error.
+// source is one way of loading a post: it returns a gallery, a definitive
+// ErrNoMedia when it positively read the post and found nothing downloadable,
+// or an inconclusive error.
 type source struct {
 	name  string
 	fetch func(context.Context, *Fetcher, postRef) (*gallery, error)
 }
 
-// sources is the fallback ladder, ordered by how each source has actually
-// behaved against anonymous traffic rather than by how official it sounds.
-//
-// The archives come first because they return the same JSON shape Reddit does
-// and do not depend on page markup, so they cannot be broken by a front-end
-// redesign. The embed page is next. Reddit's own endpoint is last because it
-// currently answers anonymous requests from datacentre IPs with 403, and
-// because old.reddit.com answers with a redirect to a login page — which is
-// exactly the trap this ladder previously fell into.
+// sources is the fallback ladder. The archives come first because they return
+// the same JSON shape Reddit does and do not depend on page markup; the embed
+// page is scraped; Reddit's own endpoint is last because it currently answers
+// anonymous requests from datacentre IPs with 403s.
 var sources = []source{
 	{"arctic-shift", fetchFromArcticShift},
 	{"embed", fetchFromEmbed},
@@ -136,10 +120,9 @@ var sources = []source{
 
 // Gallery loads a post's media, trying each source in turn.
 //
-// Nothing short-circuits on "not found" except a source that actually read the
-// post. A blocked request, a login wall and a deleted post are indistinguishable
-// from the outside, and treating a block as proof of deletion is what made this
-// tool tell users their live posts were missing.
+// A block is never treated as proof of deletion: only a source that actually
+// read the post may declare it missing, and "deleted" is only reported when
+// every source agrees.
 func (f *Fetcher) Gallery(ctx context.Context, input string) (*gallery, error) {
 	ref, err := f.resolve(ctx, input)
 	if err != nil {
@@ -191,9 +174,9 @@ func (f *Fetcher) resolve(ctx context.Context, input string) (postRef, error) {
 	return f.resolveShare(ctx, l.share)
 }
 
-// resolveShare follows a /r/<sub>/s/<code> share link to the post behind it.
-// The resolved post is returned in full, subreddit included, so a share link
-// behaves exactly like the equivalent pasted URL.
+// resolveShare follows a /r/<sub>/s/<code> share link to the post behind it,
+// returning the full post reference so it behaves like the equivalent pasted
+// URL.
 func (f *Fetcher) resolveShare(ctx context.Context, share string) (postRef, error) {
 	var errs []error
 	for _, host := range shareHosts {
@@ -243,7 +226,7 @@ func (f *Fetcher) archivePost(ctx context.Context, endpointBase, postID string) 
 		Data []redditPost `json:"data"`
 	}
 	endpoint := endpointBase + url.QueryEscape(postID)
-	if err := f.getJSON(ctx, f.client, endpoint, &payload); err != nil {
+	if err := f.getJSON(ctx, endpoint, &payload); err != nil {
 		return nil, err
 	}
 	if len(payload.Data) == 0 {
@@ -263,7 +246,7 @@ func fetchFromRedditJSON(ctx context.Context, f *Fetcher, ref postRef) (*gallery
 		} `json:"data"`
 	}
 	endpoint := "https://www.reddit.com/comments/" + url.PathEscape(ref.postID) + ".json?raw_json=1"
-	if err := f.getJSON(ctx, f.client, endpoint, &payload); err != nil {
+	if err := f.getJSON(ctx, endpoint, &payload); err != nil {
 		return nil, err
 	}
 	if len(payload) == 0 || len(payload[0].Data.Children) == 0 {
@@ -279,10 +262,9 @@ func fetchFromRedditJSON(ctx context.Context, f *Fetcher, ref postRef) (*gallery
 // answers HTTP 200 with a "Page not found" body and no media, so a slug-free
 // request looks like success while returning nothing.
 //
-// It can only ever return an inconclusive error. Zero images means "this markup
-// told us nothing", which might be a text post, a missing post, a block page, or
-// a front-end redesign — never proof that a post has no media, and never a
-// reason to stop trying the sources behind it.
+// It can only ever return an inconclusive error. Zero images means "this
+// markup told us nothing" — a text post, a missing post, a block page or a
+// redesign — never proof that a post has no media.
 func fetchFromEmbed(ctx context.Context, f *Fetcher, ref postRef) (*gallery, error) {
 	if ref.subreddit == "" {
 		return nil, errors.New("no subreddit in link, cannot build an embed URL")
@@ -338,10 +320,9 @@ var (
 // galleryFromEmbedHTML pulls the title and media out of an embed page.
 //
 // Images are read from <img> tags rather than by scanning the whole document
-// for anything that looks like a redd.it URL, because a document-wide scan also
-// matches stylesheets, preload links and social preview tags, and silently
-// returns those instead of the post's actual media. redditMediaURLs then does
-// the host filtering and deduplication.
+// for anything that looks like a redd.it URL, because a document-wide scan
+// also matches stylesheets, preload links and social preview tags.
+// redditMediaURLs does the host filtering and deduplication.
 func galleryFromEmbedHTML(page string) *gallery {
 	// Comments go first: a page that documents its own markup in a comment
 	// would otherwise feed the tag regexes text that is not part of the DOM.
@@ -369,20 +350,20 @@ func galleryFromEmbedHTML(page string) *gallery {
 
 // --- http helpers --------------------------------------------------------
 
-func (f *Fetcher) getJSON(ctx context.Context, client *http.Client, endpoint string, out any) error {
+func (f *Fetcher) getJSON(ctx context.Context, endpoint string, out any) error {
 	req, err := f.newRequest(ctx, endpoint, acceptJSON)
 	if err != nil {
 		return err
 	}
-	resp, err := client.Do(req)
+	resp, err := f.client.Do(req)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		// A login wall means we were never actually authorised to an answer, so
-		// it must not be reported as a missing post.
+		// A login wall means we were never actually authorised to an answer,
+		// so it must not be reported as a missing post.
 		if redirectedToLogin(resp) {
 			return errors.New("reddit requires a login for anonymous access")
 		}
@@ -399,7 +380,8 @@ func redirectedToLogin(resp *http.Response) bool {
 	return resp.Request != nil && strings.Contains(resp.Request.URL.Path, "/login")
 }
 
-// streamImage opens a Reddit-hosted image for reading.
+// streamImage opens a Reddit-hosted image for reading. The caller owns the
+// returned body and must close it.
 func (f *Fetcher) streamImage(ctx context.Context, rawURL string) (io.ReadCloser, string, error) {
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
@@ -409,76 +391,17 @@ func (f *Fetcher) streamImage(ctx context.Context, rawURL string) (io.ReadCloser
 		return nil, "", fmt.Errorf("%w: refusing to fetch %q", ErrInvalidURL, parsed.Host)
 	}
 
-	select {
-	case f.downloadSem <- struct{}{}:
-	case <-ctx.Done():
-		return nil, "", ctx.Err()
-	}
-	release := func() { <-f.downloadSem }
-
 	req, err := f.newRequest(ctx, rawURL, acceptMedia)
 	if err != nil {
-		release()
 		return nil, "", err
 	}
 	resp, err := f.mediaClient.Do(req)
 	if err != nil {
-		release()
 		return nil, "", err
 	}
 	if resp.StatusCode != http.StatusOK {
 		_ = resp.Body.Close()
-		release()
 		return nil, "", fmt.Errorf("status %d", resp.StatusCode)
 	}
-	// maxImageSize+1 so the reader can detect an oversized body rather than
-	// truncating it silently.
-	body := &limitedImageBody{body: resp.Body, remaining: maxImageSize + 1}
-	stream := &downloadBody{ReadCloser: body, release: release}
-	return stream, detectExtension(rawURL, resp.Header.Get("Content-Type")), nil
-}
-
-// downloadBody holds a download slot for the lifetime of the stream.
-//
-// Releasing the slot when the response headers arrive would cap nothing: every
-// request would take a slot, drop it immediately, and then sit on an open
-// connection reading a multi-megabyte image. The slot has to be given back when
-// the body is closed.
-type downloadBody struct {
-	io.ReadCloser
-	release func()
-	once    sync.Once
-}
-
-func (b *downloadBody) Close() error {
-	b.once.Do(b.release)
-	return b.ReadCloser.Close()
-}
-
-// limitedImageBody caps an image stream at maxImageSize. Reading past the cap
-// returns ErrImageTooLarge instead of silently truncating, and Close drains the
-// remainder so the connection returns to the keep-alive pool.
-type limitedImageBody struct {
-	body      io.ReadCloser
-	remaining int64
-}
-
-func (b *limitedImageBody) Read(p []byte) (int, error) {
-	if b.remaining == 0 {
-		return 0, ErrImageTooLarge
-	}
-	if int64(len(p)) > b.remaining {
-		p = p[:b.remaining]
-	}
-	n, err := b.body.Read(p)
-	b.remaining -= int64(n)
-	if n > 0 && b.remaining == 0 {
-		err = ErrImageTooLarge
-	}
-	return n, err
-}
-
-func (b *limitedImageBody) Close() error {
-	_, _ = io.Copy(io.Discard, b.body)
-	return b.body.Close()
+	return resp.Body, detectExtension(rawURL, resp.Header.Get("Content-Type")), nil
 }

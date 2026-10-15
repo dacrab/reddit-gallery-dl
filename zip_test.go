@@ -444,13 +444,8 @@ func TestContextCancellationDoesNotHang(t *testing.T) {
 	}
 }
 
-// TestZipHandlesMoreURLsThanWorkers is a deadlock guard.
-//
-// The writer releases download slots by closing bodies, and it only closes a
-// body when that body reaches its turn. A design where every URL gets its own
-// goroutine, all of which queue on a process-wide slot cap, deadlocks here: the
-// workers holding slots wait for the lowest index, and the goroutine owning the
-// lowest index waits for a slot.
+// TestZipHandlesMoreURLsThanWorkers is a deadlock guard: more URLs than
+// workers must still complete, whatever the order results arrive in.
 func TestZipHandlesMoreURLsThanWorkers(t *testing.T) {
 	f := imageFetcher("img00", "img01")
 	urls := galleryURLs(maxParallelDownloads * 6)
@@ -471,8 +466,8 @@ func TestZipHandlesMoreURLsThanWorkers(t *testing.T) {
 	}
 }
 
-// TestZipCapsConcurrentStreams checks the process-wide cap is respected while
-// the pool is saturated, and that slots come back as bodies are closed.
+// TestZipCapsConcurrentStreams checks the worker pool bounds concurrent
+// fetches, and that downloads actually run in parallel while it is saturated.
 func TestZipCapsConcurrentStreams(t *testing.T) {
 	var mu sync.Mutex
 	var open, peak int
