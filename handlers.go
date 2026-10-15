@@ -74,10 +74,9 @@ func handleIndex(tmpl *template.Template, f *Fetcher) http.HandlerFunc {
 }
 
 func alertForError(err error) *alert {
-	// Order matters. ErrUnavailable wraps the joined per-source errors, and
-	// those often include ErrPostNotFound from an archive that simply has not
-	// indexed the post. Checking "deleted" first would tell a user their post
-	// is gone when the truth is that we were blocked.
+	// Order matters: ErrUnavailable wraps the per-source errors, which may
+	// include ErrPostNotFound from an archive that has not indexed the post.
+	// Checking "deleted" first would blame a blocked fetch on the user's post.
 	switch {
 	case errors.Is(err, ErrInvalidURL):
 		return &alert{Message: "That doesn't look like a valid Reddit link.", Type: "warning"}

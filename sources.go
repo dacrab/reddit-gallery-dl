@@ -20,10 +20,9 @@ const (
 	userAgent    = "golang:reddit-gallery-dl:v1.0.0 (by /u/reddit-gallery-dl)"
 )
 
-// Accept headers are per-request-type, not interchangeable: asking Reddit for
-// text/html when fetching an image makes it answer 307 with a redirect to
-// www.reddit.com/media instead of serving the file from its CDN, so media
-// requests have to advertise that they want an image.
+// Asking Reddit for text/html when fetching an image makes it answer 307 to
+// its /media proxy instead of serving the file from the CDN, so media requests
+// must advertise the media content types.
 const (
 	acceptJSON  = "application/json"
 	acceptHTML  = "text/html,application/xhtml+xml,image/*;q=0.8,*/*;q=0.5"
@@ -36,9 +35,8 @@ var (
 	ErrUnavailable  = errors.New("no source could load this post")
 )
 
-// shareHosts are tried in turn to resolve a /r/<sub>/s/<code> link: Reddit's
-// per-host defences differ, so one host refusing a share link says little
-// about the others.
+// shareHosts are tried in turn for /r/<sub>/s/<code> links; Reddit's per-host
+// defences differ, so one host refusing says little about the others.
 var shareHosts = []string{"www.reddit.com", "old.reddit.com", "embed.reddit.com"}
 
 // Fetcher loads posts and media. It owns its HTTP clients so tests can inject
@@ -71,9 +69,8 @@ func NewFetcher() *Fetcher {
 	}
 }
 
-// guardRedirect returns a CheckRedirect that re-checks every hop against a host
-// predicate. Redirects are otherwise followed blindly, which is enough to walk
-// a request straight back out to an internal address.
+// guardRedirect returns a CheckRedirect that re-checks every hop: redirects are
+// otherwise followed blindly, which can walk a request to an internal address.
 func guardRedirect(allow func(string) bool) func(*http.Request, []*http.Request) error {
 	return func(req *http.Request, via []*http.Request) error {
 		if len(via) >= 5 {
@@ -118,11 +115,9 @@ var sources = []source{
 	{"reddit", fetchFromRedditJSON},
 }
 
-// Gallery loads a post's media, trying each source in turn.
-//
-// A block is never treated as proof of deletion: only a source that actually
-// read the post may declare it missing, and "deleted" is only reported when
-// every source agrees.
+// Gallery loads a post's media, trying each source in turn. A block is never
+// proof of deletion: only a source that actually read the post may declare it
+// missing, and "deleted" is only reported when every source agrees.
 func (f *Fetcher) Gallery(ctx context.Context, input string) (*gallery, error) {
 	ref, err := f.resolve(ctx, input)
 	if err != nil {
@@ -174,9 +169,8 @@ func (f *Fetcher) resolve(ctx context.Context, input string) (postRef, error) {
 	return f.resolveShare(ctx, l.share)
 }
 
-// resolveShare follows a /r/<sub>/s/<code> share link to the post behind it,
-// returning the full post reference so it behaves like the equivalent pasted
-// URL.
+// resolveShare follows a /r/<sub>/s/<code> share link to the post behind it and
+// returns the full post reference.
 func (f *Fetcher) resolveShare(ctx context.Context, share string) (postRef, error) {
 	var errs []error
 	for _, host := range shareHosts {
@@ -236,8 +230,7 @@ func (f *Fetcher) archivePost(ctx context.Context, endpointBase, postID string) 
 }
 
 func fetchFromRedditJSON(ctx context.Context, f *Fetcher, ref postRef) (*gallery, error) {
-	// raw_json=1 asks Reddit for unescaped media URLs. The endpoint is public
-	// and needs no OAuth token, client id, or account.
+	// raw_json=1 asks Reddit for unescaped media URLs.
 	var payload []struct {
 		Data struct {
 			Children []struct {
@@ -258,13 +251,11 @@ func fetchFromRedditJSON(ctx context.Context, f *Fetcher, ref postRef) (*gallery
 // fetchFromEmbed scrapes Reddit's embed page, which is reachable without an
 // account even when the JSON endpoints are not.
 //
-// The subreddit has to be in the request path: embed.reddit.com/comments/<id>/
-// answers HTTP 200 with a "Page not found" body and no media, so a slug-free
-// request looks like success while returning nothing.
+// The subreddit must be in the path: a slug-free URL answers 200 with a
+// "Page not found" body, looking like success while returning nothing.
 //
-// It can only ever return an inconclusive error. Zero images means "this
-// markup told us nothing" — a text post, a missing post, a block page or a
-// redesign — never proof that a post has no media.
+// Zero images is never proof of a media-less post — the markup may be a text
+// post, a block page or a redesign — so every failure here is inconclusive.
 func fetchFromEmbed(ctx context.Context, f *Fetcher, ref postRef) (*gallery, error) {
 	if ref.subreddit == "" {
 		return nil, errors.New("no subreddit in link, cannot build an embed URL")
@@ -319,10 +310,9 @@ var (
 
 // galleryFromEmbedHTML pulls the title and media out of an embed page.
 //
-// Images are read from <img> tags rather than by scanning the whole document
-// for anything that looks like a redd.it URL, because a document-wide scan
-// also matches stylesheets, preload links and social preview tags.
-// redditMediaURLs does the host filtering and deduplication.
+// Images are read from <img> tags rather than by scanning for redd.it URLs: a
+// document-wide scan also matches stylesheets, preload links and social preview
+// tags. Host filtering is left to redditMediaURLs.
 func galleryFromEmbedHTML(page string) *gallery {
 	// Comments go first: a page that documents its own markup in a comment
 	// would otherwise feed the tag regexes text that is not part of the DOM.

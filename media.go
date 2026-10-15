@@ -166,10 +166,8 @@ func previewImages(post redditPost) []string {
 
 // redditMediaURLs normalises a batch of candidate URLs: it unescapes them,
 // upgrades resized previews to the original upload, drops anything that is not
-// Reddit-hosted media, and deduplicates.
-//
-// The host filter is the second half of the download endpoint's SSRF defence
-// (the first being isRedditMediaHost at fetch time).
+// Reddit-hosted media, and deduplicates. The host filter is also what keeps a
+// post from talking the download endpoint into fetching a foreign URL.
 func redditMediaURLs(candidates []string) []string {
 	var urls []string
 	for _, candidate := range candidates {
@@ -188,13 +186,10 @@ func redditMediaURLs(candidates []string) []string {
 	return urls
 }
 
-// originalURL rewrites a preview.redd.it URL to the equivalent i.redd.it URL,
-// because preview.redd.it serves a re-encoded, downscaled copy while
-// i.redd.it is the untouched upload — both name the same media ID.
-//
-// The media ID is the final hyphen-separated segment of the path: post JSON
-// gives a bare ID ("/4hpo47nlimsh1.jpg"), while the embed page prefixes the
-// post slug ("/my-post-title-v0-4hpo47nlimsh1.jpg").
+// originalURL rewrites a preview.redd.it URL to the equivalent i.redd.it URL:
+// preview.redd.it serves a re-encoded, downscaled copy while i.redd.it is the
+// untouched upload, and both name the same media ID. The ID is the final
+// hyphen-separated path segment, with or without the embed page's post slug.
 func originalURL(raw string) string {
 	u, err := url.Parse(raw)
 	if err != nil || !strings.EqualFold(u.Host, "preview.redd.it") {

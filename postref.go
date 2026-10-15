@@ -10,11 +10,8 @@ import (
 var ErrInvalidURL = errors.New("invalid reddit url")
 
 // isRedditHost reports whether host belongs to Reddit's web or media domains.
-//
-// This is the security boundary for every user-supplied URL, so it is
-// deliberately fail-closed: it matches whole labels only, which rejects
-// "evil-reddit.com", "i.redd.it.evil.com" and trailing-dot bypasses, and IP
-// literals can never satisfy it.
+// It is the security boundary for every user-supplied URL, so it matches whole
+// labels only and can never match an IP literal.
 func isRedditHost(host string) bool {
 	host = strings.ToLower(host)
 	return host == "reddit.com" || host == "redd.it" ||
@@ -22,15 +19,14 @@ func isRedditHost(host string) bool {
 		strings.HasSuffix(host, ".redd.it")
 }
 
-// isRedditMediaHost reports whether host serves Reddit-hosted media, and is
-// therefore the only host the download endpoint may fetch on a user's behalf.
+// isRedditMediaHost reports whether host serves Reddit-hosted media, the only
+// hosts the download endpoint may fetch.
 func isRedditMediaHost(host string) bool {
 	return strings.HasSuffix(strings.ToLower(host), ".redd.it")
 }
 
-// postRef identifies a post. subreddit is carried alongside the ID because
-// Reddit's embed endpoint needs it in the request path; links that do not name
-// a subreddit, such as redd.it shortlinks, leave it empty.
+// postRef identifies a post. subreddit is carried along because the embed
+// endpoint needs it in the request path; shortlinks leave it empty.
 type postRef struct {
 	postID    string
 	subreddit string
@@ -46,7 +42,6 @@ type link struct {
 // parseLink normalises the many shapes a Reddit link arrives in — pasted
 // without a scheme, shared from the mobile app as /gallery/<id>, shortened to
 // redd.it/<id>, or carrying a share code — into a single post identity.
-// It performs no I/O, so every accepted shape is covered by table tests.
 func parseLink(input string) (link, error) {
 	raw := strings.TrimSpace(input)
 	if raw == "" {
@@ -98,8 +93,8 @@ func parseLink(input string) (link, error) {
 }
 
 // subredditOf returns s if it could name a subreddit, and "" otherwise. The
-// check keeps user input from reaching a request path unvalidated, and treats
-// "all", the catch-all subreddit, as unusable.
+// catch-all "all" is not usable, and the allowlist keeps user input out of
+// request paths unvalidated.
 func subredditOf(s string) string {
 	if s == "all" || len(s) > 32 {
 		return ""
@@ -114,9 +109,8 @@ func subredditOf(s string) string {
 	return s
 }
 
-// isPostID reports whether s has the shape of a Reddit base-36 post ID. It
-// keeps junk and traversal attempts out of the request paths built from user
-// input.
+// isPostID reports whether s has the shape of a Reddit base-36 post ID, which
+// keeps junk and traversal attempts out of URLs built from user input.
 func isPostID(s string) bool {
 	if len(s) < 4 || len(s) > 20 {
 		return false

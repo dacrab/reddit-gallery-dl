@@ -96,13 +96,10 @@ func TestZipKeepsSelectionOrder(t *testing.T) {
 	}
 }
 
-// TestZipSurvivesAFirstImageFailure is the regression test for the bug that made
-// downloads silently produce an empty archive.
-//
-// The reordering loop waited for image 1 before writing anything. One dead image
-// at the head of the list meant every later image downloaded, buffered, and was
-// then thrown away unopened — the user got a valid but empty ZIP. Signed Reddit
-// preview URLs expire, so the first image failing was routine, not rare.
+// TestZipSurvivesAFirstImageFailure is the regression test for silently empty
+// archives: the writer once waited for image 1 before writing anything, so one
+// dead image at the head meant every later image was buffered and then thrown
+// away. Signed Reddit URLs expire, so a failing first image was routine.
 func TestZipSurvivesAFirstImageFailure(t *testing.T) {
 	f := imageFetcher("img00")
 	urls := galleryURLs(4)

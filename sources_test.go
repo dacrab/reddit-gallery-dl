@@ -133,10 +133,9 @@ func TestSourceOrder(t *testing.T) {
 	}
 }
 
-// TestLoginWallDoesNotLookLikeADeletedPost is the regression test for the bug
-// that made this tool unusable: old.reddit.com answers an anonymous JSON request
-// with a redirect to /login/, the client follows it, lands on a 404, and that 404
-// was reported as "post not found" — for posts that were live the whole time.
+// TestLoginWallDoesNotLookLikeADeletedPost is a regression test: old.reddit.com
+// redirects anonymous JSON requests to /login/, the client follows it to a 404,
+// and that 404 was once reported as "post not found" for live posts.
 func TestLoginWallDoesNotLookLikeADeletedPost(t *testing.T) {
 	embed := readFixture(t, "embed_gallery.html")
 	f := testFetcher(roundTripFunc(func(r *http.Request) (*http.Response, error) {

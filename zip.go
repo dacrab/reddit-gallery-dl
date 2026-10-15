@@ -24,10 +24,8 @@ const (
 	maxParallelDownloads = 8
 )
 
-// download is the outcome for one selected image: an open body to write, or
-// the error that ended it. Failures travel down the same channel as successes
-// because the writer needs to know about them to stop waiting for an index
-// that is never going to arrive.
+// download is one image's outcome: an open body to write, or the error that
+// ended it. Failures share the channel so the writer knows about every index.
 type download struct {
 	index int
 	url   string
@@ -72,9 +70,8 @@ func handleDownloadZip(f *Fetcher) http.HandlerFunc {
 	}
 }
 
-// isFetchableImageURL reports whether the download endpoint will fetch raw for
-// the user. It re-checks the same host rule the fetcher enforces, so that a
-// hostile form post is rejected outright rather than silently skipped.
+// isFetchableImageURL reports whether the download endpoint will fetch raw on
+// the user's behalf, re-checking the same host rule the fetcher enforces.
 func isFetchableImageURL(raw string) bool {
 	u, err := url.Parse(raw)
 	return err == nil && u.Scheme == "https" && isRedditMediaHost(u.Host)
