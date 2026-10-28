@@ -48,7 +48,49 @@ func TestExtractImages(t *testing.T) {
 					"b": {S: mediaSource{U: "https://i.redd.it/b.jpg"}},
 				},
 			},
-			want: []string{"https://i.redd.it/a.mp4", "https://i.redd.it/b.jpg"},
+			want: []string{"https://i.redd.it/a.gif", "https://i.redd.it/b.jpg"},
+		},
+		{
+			name: "an animated gallery gif wins over the mp4",
+			post: redditPost{
+				IsGallery:   true,
+				GalleryData: &galleryData{Items: []galleryItem{{MediaID: "a"}}},
+				MediaMetadata: map[string]mediaMetadata{
+					"a": {S: mediaSource{
+						U:   "https://i.redd.it/a.jpg",
+						Gif: "https://preview.redd.it/a.gif?s=abc",
+						Mp4: "https://preview.redd.it/a.mp4?s=abc",
+					}},
+				},
+			},
+			want: []string{"https://preview.redd.it/a.gif?s=abc"},
+		},
+		{
+			name: "a still framed as a gif loses to the mp4 animation",
+			post: redditPost{
+				IsGallery:   true,
+				GalleryData: &galleryData{Items: []galleryItem{{MediaID: "a"}}},
+				MediaMetadata: map[string]mediaMetadata{
+					// Reddit hands back s.gif = format=png8 for an animated post;
+					// that is a poster frame, not the animation.
+					"a": {S: mediaSource{
+						Gif: "https://preview.redd.it/a.gif?format=png8&s=abc",
+						Mp4: "https://preview.redd.it/a.gif?format=mp4&s=abc",
+					}},
+				},
+			},
+			want: []string{"https://preview.redd.it/a.gif?format=mp4&s=abc"},
+		},
+		{
+			name: "a gif whose url is not animated-shaped has no mp4 to lose to",
+			post: redditPost{
+				IsGallery:   true,
+				GalleryData: &galleryData{Items: []galleryItem{{MediaID: "a"}}},
+				MediaMetadata: map[string]mediaMetadata{
+					"a": {S: mediaSource{Gif: "https://preview.redd.it/a.gif?format=png8&s=abc"}},
+				},
+			},
+			want: []string{"https://preview.redd.it/a.gif?format=png8&s=abc"},
 		},
 		{
 			name: "skips gallery items with no metadata",
@@ -102,6 +144,19 @@ func TestExtractImages(t *testing.T) {
 			want: []string{"https://preview.redd.it/anim.mp4?s=abc"},
 		},
 		{
+			name: "preview prefers an animated gif variant",
+			post: redditPost{
+				Preview: &redditPreview{Images: []previewImage{{
+					Source: previewSource{URL: "https://preview.redd.it/still.jpg"},
+					Variants: previewVariants{
+						GIF: &previewVariant{Source: previewSource{URL: "https://preview.redd.it/anim.gif?s=abc"}},
+						MP4: &previewVariant{Source: previewSource{URL: "https://preview.redd.it/anim.mp4?s=abc"}},
+					},
+				}}},
+			},
+			want: []string{"https://preview.redd.it/anim.gif?s=abc"},
+		},
+		{
 			name: "gallery flag without gallery data falls through",
 			post: redditPost{IsGallery: true, URL: "https://i.redd.it/direct.jpg"},
 			want: []string{"https://i.redd.it/direct.jpg"},
@@ -144,6 +199,10 @@ func TestOriginalURL(t *testing.T) {
 		{"https://i.redd.it/4hpo47nlimsh1.jpg", "https://i.redd.it/4hpo47nlimsh1.jpg"},
 		{"https://external-preview.redd.it/AbCdEfGh.png?auto=webp", "https://external-preview.redd.it/AbCdEfGh.png?auto=webp"},
 		{"https://v.redd.it/abc/DASH_720.mp4", "https://v.redd.it/abc/DASH_720.mp4"},
+		// format=png8 exists only under preview.redd.it; rewriting it to
+		// i.redd.it 404s, so the resized still is kept instead.
+		{"https://preview.redd.it/x-v0-abc123.gif?format=png8&s=zz", "https://preview.redd.it/x-v0-abc123.gif?format=png8&s=zz"},
+		{"https://preview.redd.it/x-v0-abc123.png?format=png8&s=zz", "https://preview.redd.it/x-v0-abc123.png?format=png8&s=zz"},
 		// No usable media ID: left alone rather than mangled.
 		{"https://preview.redd.it/noextension", "https://preview.redd.it/noextension"},
 		{"https://preview.redd.it/short.zzz", "https://preview.redd.it/short.zzz"},

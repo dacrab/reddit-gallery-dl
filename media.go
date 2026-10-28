@@ -115,15 +115,38 @@ func galleryImages(post redditPost) []string {
 
 // richestVariant prefers an animated variant over the still frame, so a GIF
 // gallery downloads as a GIF rather than as its poster image.
+//
+// s.gif is not a promise of animation: Reddit usually points it at a
+// format=png8 still, and a .gif can name either. Only a GIF whose own URL says
+// it is an animated GIF is trusted; a GIF of any other shape downloads as the
+// mp4 when one exists, since that is the same animation at a fraction of the
+// size and plays everywhere.
 func richestVariant(s mediaSource) []string {
 	switch {
-	case s.Mp4 != "" && urlExt(s.Mp4) == ".mp4":
+	case isAnimatedGif(s.Gif):
+		return []string{s.Gif}
+	case s.Mp4 != "":
 		return []string{s.Mp4}
 	case s.Gif != "":
 		return []string{s.Gif}
 	default:
 		return []string{s.U}
 	}
+}
+
+// isAnimatedGif reports whether raw names an animated GIF rather than a still
+// rendered into a .gif container. Reddit marks stills with format=png8, or (for
+// videos re-served through the GIF pipeline) format=mp4.
+func isAnimatedGif(raw string) bool {
+	if urlExt(raw) != ".gif" {
+		return false
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	format := strings.ToLower(u.Query().Get("format"))
+	return format != "png8" && format != "mp4"
 }
 
 func videoImages(post redditPost) []string {
@@ -152,7 +175,11 @@ func previewImages(post redditPost) []string {
 	}
 	var urls []string
 	for _, img := range post.Preview.Images {
+		// Same rule as richestVariant: a genuinely animated GIF beats the mp4,
+		// but the mp4 beats a still framed as a GIF.
 		switch {
+		case img.Variants.GIF != nil && isAnimatedGif(img.Variants.GIF.Source.URL):
+			urls = append(urls, img.Variants.GIF.Source.URL)
 		case img.Variants.MP4 != nil:
 			urls = append(urls, img.Variants.MP4.Source.URL)
 		case img.Variants.GIF != nil:
@@ -190,9 +217,16 @@ func redditMediaURLs(candidates []string) []string {
 // preview.redd.it serves a re-encoded, downscaled copy while i.redd.it is the
 // untouched upload, and both name the same media ID. The ID is the final
 // hyphen-separated path segment, with or without the embed page's post slug.
+//
+// The rewrite is skipped for format=png8, which names a still that exists only
+// under preview.redd.it: rewriting it to i.redd.it produces a 404. The original
+// is left in place instead, since a resized still beats no image at all.
 func originalURL(raw string) string {
 	u, err := url.Parse(raw)
 	if err != nil || !strings.EqualFold(u.Host, "preview.redd.it") {
+		return raw
+	}
+	if strings.EqualFold(u.Query().Get("format"), "png8") {
 		return raw
 	}
 	id, ext, ok := strings.Cut(strings.TrimPrefix(u.Path, "/"), ".")
