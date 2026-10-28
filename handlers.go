@@ -21,10 +21,10 @@ func routes(tmpl *template.Template, f *Fetcher) *http.ServeMux {
 }
 
 type templateData struct {
-	Title  string
-	Images []string
-	URL    string
-	Alert  *alert
+	Title string
+	Media []string
+	URL   string
+	Alert *alert
 }
 
 type alert struct {
@@ -62,11 +62,11 @@ func handleIndex(tmpl *template.Template, f *Fetcher) http.HandlerFunc {
 			return
 		}
 		render(w, templateData{
-			Title:  gallery.Title,
-			Images: gallery.Images,
-			URL:    rawURL,
+			Title: gallery.Title,
+			Media: gallery.Media,
+			URL:   rawURL,
 			Alert: &alert{
-				Message: fmt.Sprintf("Loaded %d images!", len(gallery.Images)),
+				Message: fmt.Sprintf("Loaded %d files!", len(gallery.Media)),
 				Type:    "success",
 			},
 		})
@@ -86,7 +86,7 @@ func alertForError(err error) *alert {
 			Type:    "danger",
 		}
 	case errors.Is(err, ErrNoMedia):
-		return &alert{Message: "This post exists but has no images.", Type: "info"}
+		return &alert{Message: "This post exists but has no downloadable media.", Type: "info"}
 	case errors.Is(err, ErrPostNotFound):
 		return &alert{Message: "Post not found. It might be deleted, private, or too new.", Type: "warning"}
 	default:

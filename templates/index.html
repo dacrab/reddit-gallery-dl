@@ -146,6 +146,9 @@ nav .spacer{flex:1}
 /* EMPTY STATE */
 .empty{flex:1;display:flex;align-items:center;justify-content:center;opacity:.15}
 
+/* TOUCH — there is no hover, so keep the open-original control visible */
+@media(hover:none){.card-actions{opacity:1}}
+
 /* MOBILE */
 @media(max-width:640px){
   .toolbar .search-form{max-width:none;flex:1}
@@ -174,7 +177,7 @@ nav .spacer{flex:1}
   </div>
 </nav>
 
-{{ if .Images }}
+{{ if .Media }}
 <main class="gallery-page">
 
   <div class="toolbar">
@@ -193,7 +196,7 @@ nav .spacer{flex:1}
 
         <div class="toolbar-sep"></div>
 
-        <span class="toolbar-meta" id="selCount">{{ len .Images }} selected</span>
+        <span class="toolbar-meta" id="selCount">{{ len .Media }} selected</span>
 
         <div class="toolbar-actions">
           <button type="button" class="chip" onclick="selectAll()">All</button>
@@ -215,7 +218,7 @@ nav .spacer{flex:1}
     <input type="hidden" name="page_title" value="{{ .Title }}">
     <div class="container">
       <div class="grid">
-        {{ range $i, $url := .Images }}
+        {{ range $i, $url := .Media }}
         {{ $ext := urlExt $url }}
         {{ $isVideo := eq $ext ".mp4" }}
         {{ $isGif := eq $ext ".gif" }}
@@ -225,7 +228,7 @@ nav .spacer{flex:1}
           </div>
           <input type="checkbox" name="image_urls" value="{{ $url }}" checked>
           {{ if $isVideo }}
-          <video src="{{ $url }}" autoplay loop muted playsinline preload="none"></video>
+          <video src="{{ $url }}" loop muted playsinline preload="metadata"></video>
           {{ else }}
           <img src="{{ $url }}" alt="" loading="lazy" decoding="async">
           {{ end }}
@@ -333,6 +336,14 @@ document.getElementById('searchForm').addEventListener('submit', () => {
     selected = 0;
     updateUI();
   };
+
+  // Videos animate on hover instead of autoplaying every card at once — a
+  // gallery of clips would otherwise start dozens of downloads on page load.
+  document.querySelectorAll('.card video').forEach(v => {
+    const card = v.closest('.card');
+    card.addEventListener('mouseenter', () => { v.play().catch(() => {}); });
+    card.addEventListener('mouseleave', () => { v.pause(); });
+  });
 })();
 </script>
 </body>

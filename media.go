@@ -71,22 +71,24 @@ type mediaMetadata struct {
 	S mediaSource `json:"s"`
 }
 
+// gallery is a post's downloadable media: a title and the URLs, in the order
+// the post presents them. Entries may be images, GIFs, or videos.
 type gallery struct {
-	Title  string
-	Images []string
+	Title string
+	Media []string
 }
 
-// extractImages pulls downloadable media out of a post.
+// extractMedia pulls downloadable media out of a post.
 //
 // The candidate groups are ordered by fidelity: a gallery's media_metadata
 // carries the original upload, while preview.images carries a re-encoded,
 // downscaled copy, so the preview is the last resort.
-func extractImages(post redditPost) []string {
+func extractMedia(post redditPost) []string {
 	groups := [][]string{
-		galleryImages(post),
-		videoImages(post),
-		directImages(post),
-		previewImages(post),
+		galleryMedia(post),
+		videoMedia(post),
+		directMedia(post),
+		previewMedia(post),
 	}
 	for _, candidates := range groups {
 		if urls := redditMediaURLs(candidates); len(urls) > 0 {
@@ -96,9 +98,9 @@ func extractImages(post redditPost) []string {
 	return nil
 }
 
-// galleryImages reads the authoritative source for multi-image posts: the
+// galleryMedia reads the authoritative source for multi-image posts: the
 // ordered item list plus the metadata for each item.
-func galleryImages(post redditPost) []string {
+func galleryMedia(post redditPost) []string {
 	if !post.IsGallery || post.GalleryData == nil {
 		return nil
 	}
@@ -108,7 +110,7 @@ func galleryImages(post redditPost) []string {
 		if !ok {
 			continue
 		}
-		urls = append(urls, richestVariant(meta.S)...)
+		urls = append(urls, richestVariant(meta.S))
 	}
 	return urls
 }
@@ -121,16 +123,16 @@ func galleryImages(post redditPost) []string {
 // it is an animated GIF is trusted; a GIF of any other shape downloads as the
 // mp4 when one exists, since that is the same animation at a fraction of the
 // size and plays everywhere.
-func richestVariant(s mediaSource) []string {
+func richestVariant(s mediaSource) string {
 	switch {
 	case isAnimatedGif(s.Gif):
-		return []string{s.Gif}
+		return s.Gif
 	case s.Mp4 != "":
-		return []string{s.Mp4}
+		return s.Mp4
 	case s.Gif != "":
-		return []string{s.Gif}
+		return s.Gif
 	default:
-		return []string{s.U}
+		return s.U
 	}
 }
 
@@ -149,24 +151,24 @@ func isAnimatedGif(raw string) bool {
 	return format != "png8" && format != "mp4"
 }
 
-func videoImages(post redditPost) []string {
+func videoMedia(post redditPost) []string {
 	if post.IsVideo && post.Media != nil && post.Media.RedditVideo != nil {
 		return []string{stripQuery(post.Media.RedditVideo.FallbackURL)}
 	}
 	return nil
 }
 
-// directImages is the post's own link, which for an image post is the original
+// directMedia is the post's own link, which for an image post is the original
 // upload. redditMediaURLs filters it to Reddit hosts, so a post linking
 // somewhere external falls through to its Reddit-hosted preview instead.
-func directImages(post redditPost) []string {
+func directMedia(post redditPost) []string {
 	if post.URL == "" {
 		return nil
 	}
 	return []string{post.URL}
 }
 
-func previewImages(post redditPost) []string {
+func previewMedia(post redditPost) []string {
 	if post.Preview == nil {
 		return nil
 	}
@@ -234,7 +236,7 @@ func originalURL(raw string) string {
 		return raw
 	}
 	ext = strings.ToLower(ext)
-	if !imageExts["."+ext] {
+	if !mediaExts["."+ext] {
 		return raw
 	}
 	if i := strings.LastIndexByte(id, '-'); i >= 0 {
@@ -278,15 +280,17 @@ func urlExt(rawURL string) string {
 	return strings.ToLower(path.Ext(rawURL))
 }
 
-var imageExts = map[string]bool{
+// mediaExts are the extensions a download may be named by. The content-type
+// map below them must stay in step with this set.
+var mediaExts = map[string]bool{
 	".png": true, ".gif": true, ".jpg": true, ".jpeg": true, ".webp": true,
 	".avif": true, ".mp4": true, ".webm": true, ".mov": true,
 }
 
-// detectExtension picks a filename extension for a downloaded image, trusting
+// detectExtension picks a filename extension for downloaded media, trusting
 // the URL first and the response's Content-Type second.
 func detectExtension(urlStr, contentType string) string {
-	if ext := urlExt(urlStr); imageExts[ext] {
+	if ext := urlExt(urlStr); mediaExts[ext] {
 		return ext
 	}
 	mediaType, _, _ := strings.Cut(contentType, ";")

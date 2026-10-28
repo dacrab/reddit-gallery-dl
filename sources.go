@@ -283,18 +283,18 @@ func fetchFromEmbed(ctx context.Context, f *Fetcher, ref postRef) (*gallery, err
 		return nil, err
 	}
 	gallery := galleryFromEmbedHTML(string(page))
-	if gallery == nil || len(gallery.Images) == 0 {
+	if gallery == nil || len(gallery.Media) == 0 {
 		return nil, errors.New("embed page exposed no media (text post, missing post, block page, or markup change)")
 	}
 	return gallery, nil
 }
 
 func galleryFromPost(post redditPost) (*gallery, error) {
-	images := extractImages(post)
-	if len(images) == 0 {
+	media := extractMedia(post)
+	if len(media) == 0 {
 		return nil, ErrNoMedia
 	}
-	return &gallery{Title: post.Title, Images: images}, nil
+	return &gallery{Title: post.Title, Media: media}, nil
 }
 
 // --- embed page parsing --------------------------------------------------
@@ -329,11 +329,11 @@ func galleryFromEmbedHTML(page string) *gallery {
 			candidates = append(candidates, m[1])
 		}
 	}
-	if images := redditMediaURLs(candidates); len(images) > 0 {
-		return &gallery{Title: title, Images: images}
+	if media := redditMediaURLs(candidates); len(media) > 0 {
+		return &gallery{Title: title, Media: media}
 	}
-	if videos := redditMediaURLs(rxEmbedVideo.FindAllString(page, -1)); len(videos) > 0 {
-		return &gallery{Title: title, Images: videos}
+	if media := redditMediaURLs(rxEmbedVideo.FindAllString(page, -1)); len(media) > 0 {
+		return &gallery{Title: title, Media: media}
 	}
 	return nil
 }

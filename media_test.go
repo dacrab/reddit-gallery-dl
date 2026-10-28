@@ -175,9 +175,9 @@ func TestExtractImages(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := extractImages(tt.post)
+			got := extractMedia(tt.post)
 			if len(got) != len(tt.want) {
-				t.Fatalf("extractImages() = %v, want %v", got, tt.want)
+				t.Fatalf("extractMedia() = %v, want %v", got, tt.want)
 			}
 			for i := range tt.want {
 				if got[i] != tt.want[i] {
@@ -263,10 +263,10 @@ func TestArchiveFixtureIsParsed(t *testing.T) {
 	}
 	// Six images, and every one must be the original i.redd.it upload rather
 	// than the re-encoded preview the JSON actually points at.
-	if len(gallery.Images) != 6 {
-		t.Fatalf("got %d images, want 6: %v", len(gallery.Images), gallery.Images)
+	if len(gallery.Media) != 6 {
+		t.Fatalf("got %d images, want 6: %v", len(gallery.Media), gallery.Media)
 	}
-	for i, u := range gallery.Images {
+	for i, u := range gallery.Media {
 		if !strings.HasPrefix(u, "https://i.redd.it/") {
 			t.Errorf("image %d = %q, want an i.redd.it original", i, u)
 		}
@@ -283,9 +283,9 @@ func TestArchiveFixtureIsParsed(t *testing.T) {
 		"https://i.redd.it/wdrfb3nlimsh1.jpg",
 	}
 	for i := range want {
-		if gallery.Images[i] != want[i] {
+		if gallery.Media[i] != want[i] {
 			t.Errorf("image %d = %q, want %q (order must follow gallery_data.items)",
-				i, gallery.Images[i], want[i])
+				i, gallery.Media[i], want[i])
 		}
 	}
 }

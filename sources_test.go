@@ -54,8 +54,8 @@ func TestEmbedFixture(t *testing.T) {
 	if gallery.Title != "From recent trip to Austria" {
 		t.Errorf("title = %q", gallery.Title)
 	}
-	if len(gallery.Images) != 6 {
-		t.Fatalf("got %d images, want 6: %v", len(gallery.Images), gallery.Images)
+	if len(gallery.Media) != 6 {
+		t.Fatalf("got %d images, want 6: %v", len(gallery.Media), gallery.Media)
 	}
 	want := []string{
 		"https://i.redd.it/4hpo47nlimsh1.jpg",
@@ -66,11 +66,11 @@ func TestEmbedFixture(t *testing.T) {
 		"https://i.redd.it/wdrfb3nlimsh1.jpg",
 	}
 	for i := range want {
-		if gallery.Images[i] != want[i] {
-			t.Errorf("image %d = %q, want %q", i, gallery.Images[i], want[i])
+		if gallery.Media[i] != want[i] {
+			t.Errorf("image %d = %q, want %q", i, gallery.Media[i], want[i])
 		}
 	}
-	for _, u := range gallery.Images {
+	for _, u := range gallery.Media {
 		if strings.Contains(u, "redditmedia.com") {
 			t.Errorf("subreddit icon leaked into the gallery: %q", u)
 		}
@@ -102,8 +102,8 @@ func TestGalleryFromEmbedHTML_PrefersImagesOverVideo(t *testing.T) {
 	if gallery == nil {
 		t.Fatal("nil gallery")
 	}
-	if len(gallery.Images) != 1 || gallery.Images[0] != "https://i.redd.it/4hpo47nlimsh1.jpg" {
-		t.Errorf("images = %v, want the gallery image", gallery.Images)
+	if len(gallery.Media) != 1 || gallery.Media[0] != "https://i.redd.it/4hpo47nlimsh1.jpg" {
+		t.Errorf("images = %v, want the gallery image", gallery.Media)
 	}
 }
 
@@ -113,8 +113,8 @@ func TestGalleryFromEmbedHTML_VideoOnly(t *testing.T) {
 	if gallery == nil {
 		t.Fatal("nil gallery")
 	}
-	if len(gallery.Images) != 1 || !strings.HasPrefix(gallery.Images[0], "https://v.redd.it/") {
-		t.Errorf("images = %v, want the v.redd.it clip", gallery.Images)
+	if len(gallery.Media) != 1 || !strings.HasPrefix(gallery.Media[0], "https://v.redd.it/") {
+		t.Errorf("images = %v, want the v.redd.it clip", gallery.Media)
 	}
 }
 
@@ -160,8 +160,8 @@ func TestLoginWallDoesNotLookLikeADeletedPost(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a login wall must not be reported as a missing post: %v", err)
 	}
-	if len(gallery.Images) != 6 {
-		t.Errorf("got %d images, want 6", len(gallery.Images))
+	if len(gallery.Media) != 6 {
+		t.Errorf("got %d images, want 6", len(gallery.Media))
 	}
 }
 
@@ -266,8 +266,8 @@ func TestNonJSONRedditResponseIsABlock(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WAF page should have been treated as inconclusive: %v", err)
 	}
-	if len(gallery.Images) != 6 {
-		t.Errorf("got %d images, want 6", len(gallery.Images))
+	if len(gallery.Media) != 6 {
+		t.Errorf("got %d images, want 6", len(gallery.Media))
 	}
 }
 
@@ -304,8 +304,8 @@ func TestShareLinkFollowsRedirect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("share link did not resolve: %v", err)
 	}
-	if len(gallery.Images) != 6 {
-		t.Errorf("got %d images, want 6", len(gallery.Images))
+	if len(gallery.Media) != 6 {
+		t.Errorf("got %d images, want 6", len(gallery.Media))
 	}
 }
 
@@ -463,8 +463,8 @@ func TestEmbedRungAsksForTheSubreddit(t *testing.T) {
 	if want := "/r/pics/comments/1wu034e/"; embedPath != want {
 		t.Errorf("embed path = %q, want %q", embedPath, want)
 	}
-	if len(gallery.Images) != 6 {
-		t.Errorf("got %d images, want 6", len(gallery.Images))
+	if len(gallery.Media) != 6 {
+		t.Errorf("got %d images, want 6", len(gallery.Media))
 	}
 }
 

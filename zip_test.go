@@ -73,7 +73,7 @@ func galleryURLs(n int) []string {
 }
 
 // TestZipKeepsSelectionOrder is the ordinary case: every download succeeds and
-// image_NNN lines up with the Nth URL the user ticked.
+// media_NNN lines up with the Nth URL the user ticked.
 func TestZipKeepsSelectionOrder(t *testing.T) {
 	f := imageFetcher()
 	urls := galleryURLs(5)
@@ -88,7 +88,7 @@ func TestZipKeepsSelectionOrder(t *testing.T) {
 		t.Fatalf("got %d entries, want 5: %v", len(entries), entries)
 	}
 	for i, u := range urls {
-		name := fmt.Sprintf("image_%03d.png", i+1)
+		name := fmt.Sprintf("media_%03d.png", i+1)
 		want := "BYTES:/" + strings.TrimPrefix(u, "https://i.redd.it/")
 		if entries[name] != want {
 			t.Errorf("%s = %q, want %q", name, entries[name], want)
@@ -118,7 +118,7 @@ func TestZipSurvivesAFirstImageFailure(t *testing.T) {
 	}
 	sort.Strings(names)
 	for i, name := range names {
-		if want := fmt.Sprintf("image_%03d.png", i+1); name != want {
+		if want := fmt.Sprintf("media_%03d.png", i+1); name != want {
 			t.Errorf("entry %d = %q, want %q (numbering must have no gaps)", i, name, want)
 		}
 	}
@@ -134,14 +134,14 @@ func TestZipSurvivesAMiddleAndLastFailure(t *testing.T) {
 	if len(entries) != 3 {
 		t.Fatalf("got %d entries, want 3: %v", len(entries), entries)
 	}
-	for _, name := range []string{"image_001.png", "image_002.png", "image_003.png"} {
+	for _, name := range []string{"media_001.png", "media_002.png", "media_003.png"} {
 		if _, ok := entries[name]; !ok {
 			t.Errorf("missing %s: %v", name, entries)
 		}
 	}
 	// Surviving images keep their content, not their original position.
-	if entries["image_002.png"] != "BYTES:/img02.png" {
-		t.Errorf("image_002.png = %q, want img02", entries["image_002.png"])
+	if entries["media_002.png"] != "BYTES:/img02.png" {
+		t.Errorf("media_002.png = %q, want img02", entries["media_002.png"])
 	}
 }
 
@@ -220,12 +220,18 @@ func TestSingleImageIsServedDirectly(t *testing.T) {
 	}
 }
 
-func TestDownloadZipCapsTheNumberOfImages(t *testing.T) {
+// TestDownloadZipRejectsTooManyFiles pins the over-cap behaviour: a request over
+// the limit is refused outright rather than answered with a ZIP that silently
+// contains fewer files than the user selected.
+func TestDownloadZipRejectsTooManyFiles(t *testing.T) {
 	f := imageFetcher()
 	rec := httptest.NewRecorder()
 	handleDownloadZip(f)(rec, postForm(t, "http://x", galleryURLs(maxURLs+20), "t"))
-	if got := len(zipEntries(t, rec.Body.Bytes())); got != maxURLs {
-		t.Errorf("got %d entries, want the cap of %d", got, maxURLs)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct == "application/zip" {
+		t.Errorf("rejected request still advertised %s", ct)
 	}
 }
 
@@ -399,7 +405,7 @@ func TestAlertForError(t *testing.T) {
 	}{
 		{ErrInvalidURL, "valid Reddit link"},
 		{fmt.Errorf("wrapped: %w", ErrPostNotFound), "Post not found"},
-		{ErrNoMedia, "no images"},
+		{ErrNoMedia, "no downloadable media"},
 		{fmt.Errorf("%w: %w", ErrUnavailable, ErrPostNotFound), "Couldn't reach any source"},
 		{errors.New("boom"), "Something went wrong"},
 	}

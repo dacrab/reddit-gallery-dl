@@ -24,7 +24,7 @@ const (
 	maxParallelDownloads = 8
 )
 
-// download is one image's outcome: an open body to write, or the error that
+// download is one file's outcome: an open body to write, or the error that
 // ended it. Failures share the channel so the writer knows about every index.
 type download struct {
 	index int
@@ -51,7 +51,8 @@ func handleDownloadZip(f *Fetcher) http.HandlerFunc {
 			return
 		}
 		if len(urls) > maxURLs {
-			urls = urls[:maxURLs]
+			http.Error(w, fmt.Sprintf("Too many files selected (limit %d)", maxURLs), http.StatusBadRequest)
+			return
 		}
 		// Validate before a single byte of the archive is written: once the ZIP
 		// header is out, the status code is already committed. This is also the
@@ -63,7 +64,7 @@ func handleDownloadZip(f *Fetcher) http.HandlerFunc {
 			}
 		}
 		if len(urls) == 1 {
-			serveSingleImage(r.Context(), f, w, urls[0])
+			serveSingleMedia(r.Context(), f, w, urls[0])
 			return
 		}
 		streamZip(r.Context(), f, w, cleanFilename(r.FormValue("page_title")), urls)
@@ -129,7 +130,7 @@ func streamZip(ctx context.Context, f *Fetcher, w http.ResponseWriter, title str
 	var written int
 	write := func(d download) {
 		written++
-		name := fmt.Sprintf("image_%03d%s", written, d.ext)
+		name := fmt.Sprintf("media_%03d%s", written, d.ext)
 		err := func() error {
 			f, err := zw.Create(name)
 			if err != nil {
@@ -167,7 +168,9 @@ func streamZip(ctx context.Context, f *Fetcher, w http.ResponseWriter, title str
 	}
 }
 
-func serveSingleImage(ctx context.Context, f *Fetcher, w http.ResponseWriter, rawURL string) {
+// serveSingleMedia streams a single file straight through, named after the
+// URL rather than zipped.
+func serveSingleMedia(ctx context.Context, f *Fetcher, w http.ResponseWriter, rawURL string) {
 	body, ext, err := f.streamImage(ctx, rawURL)
 	if err != nil {
 		http.Error(w, "Failed to fetch image", http.StatusBadGateway)
