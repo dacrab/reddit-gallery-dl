@@ -220,6 +220,28 @@ func TestSingleImageIsServedDirectly(t *testing.T) {
 	}
 }
 
+func TestSingleMediaNamesTheServedRendition(t *testing.T) {
+	// Reddit serves variants through the original's path: .../clip.gif with
+	// format=mp4 is an mp4, and format=png8 is a png. The download must not be
+	// named .gif in either case.
+	tests := []struct{ url, name, contentType string }{
+		{"https://preview.redd.it/0n5exiers7yh1.gif?width=1080&format=mp4&s=abc", "0n5exiers7yh1.mp4", "video/mp4"},
+		{"https://preview.redd.it/0n5exiers7yh1.gif?format=png8&s=abc", "0n5exiers7yh1.png", "image/png"},
+	}
+	for _, tt := range tests {
+		rec := httptest.NewRecorder()
+		handleDownloadZip(imageFetcher())(rec, postForm(t, "http://x", []string{tt.url}, "t"))
+
+		if ct := rec.Header().Get("Content-Type"); ct != tt.contentType {
+			t.Errorf("%s: content-type = %q, want %q", tt.url, ct, tt.contentType)
+		}
+		cd := rec.Header().Get("Content-Disposition")
+		if !strings.Contains(cd, tt.name) || strings.Contains(cd, ".gif") {
+			t.Errorf("%s: content-disposition = %q, want %q and no .gif", tt.url, cd, tt.name)
+		}
+	}
+}
+
 // TestDownloadZipRejectsTooManyFiles pins the over-cap behaviour: a request over
 // the limit is refused outright rather than answered with a ZIP that silently
 // contains fewer files than the user selected.

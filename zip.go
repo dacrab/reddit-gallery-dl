@@ -184,13 +184,16 @@ func serveSingleMedia(ctx context.Context, f *Fetcher, w http.ResponseWriter, ra
 
 	filename := "image" + ext
 	if u, err := url.Parse(rawURL); err == nil {
-		if base := path.Base(u.Path); base != "." && base != "/" && base != "" {
-			filename = base
+		base := path.Base(u.Path)
+		// The URL path names the original even when Reddit serves a different
+		// rendition: .../clip.gif?format=mp4 is an mp4, so replace its extension.
+		if stem := strings.TrimSuffix(base, path.Ext(base)); stem != "" && stem != "." && stem != "/" {
+			filename = stem + ext
 		}
 	}
 	w.Header().Set("Content-Disposition",
 		mime.FormatMediaType("attachment", map[string]string{"filename": filename}))
-	w.Header().Set("Content-Type", mime.TypeByExtension(ext))
+	w.Header().Set("Content-Type", mediaContentTypes[ext])
 	if _, err := io.Copy(w, body); err != nil && !isClientDisconnect(err) {
 		log.Printf("stream error: %v", err)
 	}

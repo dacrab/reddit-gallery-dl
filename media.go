@@ -244,7 +244,7 @@ func originalURL(raw string) string {
 		return raw
 	}
 	ext = strings.ToLower(ext)
-	if !mediaExts["."+ext] {
+	if !isMediaExt("." + ext) {
 		return raw
 	}
 	if i := strings.LastIndexByte(id, '-'); i >= 0 {
@@ -285,23 +285,36 @@ func urlExt(rawURL string) string {
 	if format == "png8" {
 		return ".png"
 	}
-	if ext := "." + format; mediaExts[ext] {
+	if ext := "." + format; isMediaExt(ext) {
 		return ext
 	}
 	return strings.ToLower(path.Ext(u.Path))
 }
 
-// mediaExts are the extensions a download may be named by. detectExtension
-// below maps content types onto this set.
-var mediaExts = map[string]bool{
-	".png": true, ".gif": true, ".jpg": true, ".jpeg": true, ".webp": true,
-	".avif": true, ".mp4": true, ".webm": true, ".mov": true,
+// mediaContentTypes are the extensions a download may be named by, and the
+// Content-Type sent when one is served on its own. detectExtension below maps
+// content types back onto these extensions.
+var mediaContentTypes = map[string]string{
+	".png":  "image/png",
+	".gif":  "image/gif",
+	".jpg":  "image/jpeg",
+	".jpeg": "image/jpeg",
+	".webp": "image/webp",
+	".avif": "image/avif",
+	".mp4":  "video/mp4",
+	".webm": "video/webm",
+	".mov":  "video/quicktime",
+}
+
+func isMediaExt(ext string) bool {
+	_, ok := mediaContentTypes[ext]
+	return ok
 }
 
 // detectExtension picks a filename extension for downloaded media, trusting
 // the URL first and the response's Content-Type second.
 func detectExtension(urlStr, contentType string) string {
-	if ext := urlExt(urlStr); mediaExts[ext] {
+	if ext := urlExt(urlStr); isMediaExt(ext) {
 		return ext
 	}
 	mediaType, _, _ := strings.Cut(contentType, ";")
