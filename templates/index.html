@@ -220,7 +220,7 @@ nav .spacer{flex:1}
       <div class="grid">
         {{ range $i, $url := .Media }}
         {{ $ext := urlExt $url }}
-        {{ $isVideo := eq $ext ".mp4" }}
+        {{ $isVideo := or (eq $ext ".mp4") (eq $ext ".webm") (eq $ext ".mov") }}
         {{ $isGif := eq $ext ".gif" }}
         <div class="card sel" onclick="toggleSel(this)">
           <div class="check">
@@ -232,7 +232,7 @@ nav .spacer{flex:1}
           {{ else }}
           <img src="{{ $url }}" alt="" loading="lazy" decoding="async">
           {{ end }}
-          {{ if $isVideo }}<div class="badge">MP4</div>
+          {{ if $isVideo }}<div class="badge">VIDEO</div>
           {{ else if $isGif }}<div class="badge">GIF</div>{{ end }}
           <div class="card-actions" onclick="event.stopPropagation()">
             <a href="{{ $url }}" target="_blank" rel="noopener" class="open-link" title="Open original">

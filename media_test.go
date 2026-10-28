@@ -222,6 +222,9 @@ func TestDetectExtension(t *testing.T) {
 		{"https://i.redd.it/abc.jpg?width=640", "", ".jpg"},
 		{"https://v.redd.it/abc/DASH_720.mp4", "", ".mp4"},
 		{"https://i.redd.it/abc.gif", "", ".gif"},
+		// Reddit's format parameter overrides a path named after the original.
+		{"https://preview.redd.it/abc.gif?format=png8&s=x", "", ".png"},
+		{"https://preview.redd.it/abc.gif?format=mp4&s=x", "", ".mp4"},
 		{"https://i.redd.it/abc", "image/png", ".png"},
 		{"https://i.redd.it/abc", "image/jpeg; charset=utf-8", ".jpg"},
 		{"https://i.redd.it/abc", "video/mp4", ".mp4"},
@@ -231,6 +234,23 @@ func TestDetectExtension(t *testing.T) {
 	for _, tt := range tests {
 		if got := detectExtension(tt.url, tt.ct); got != tt.want {
 			t.Errorf("detectExtension(%q, %q) = %q, want %q", tt.url, tt.ct, got, tt.want)
+		}
+	}
+}
+
+func TestURLExt(t *testing.T) {
+	tests := []struct{ url, want string }{
+		{"https://i.redd.it/abc.png", ".png"},
+		{"https://i.redd.it/abc.JPG?width=640", ".jpg"},
+		{"https://preview.redd.it/abc.gif?format=png8&s=x", ".png"},
+		{"https://preview.redd.it/abc.gif?format=mp4&s=x", ".mp4"},
+		// Unknown formats fall back to the path rather than inventing one.
+		{"https://preview.redd.it/abc.jpg?format=pjpg&auto=webp", ".jpg"},
+		{"https://i.redd.it/abc", ""},
+	}
+	for _, tt := range tests {
+		if got := urlExt(tt.url); got != tt.want {
+			t.Errorf("urlExt(%q) = %q, want %q", tt.url, got, tt.want)
 		}
 	}
 }

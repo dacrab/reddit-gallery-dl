@@ -137,18 +137,10 @@ func richestVariant(s mediaSource) string {
 }
 
 // isAnimatedGif reports whether raw names an animated GIF rather than a still
-// rendered into a .gif container. Reddit marks stills with format=png8, or (for
-// videos re-served through the GIF pipeline) format=mp4.
+// or video re-served through the GIF pipeline. urlExt reads Reddit's format
+// parameter, so a .gif path with format=png8 or format=mp4 is not a GIF.
 func isAnimatedGif(raw string) bool {
-	if urlExt(raw) != ".gif" {
-		return false
-	}
-	u, err := url.Parse(raw)
-	if err != nil {
-		return false
-	}
-	format := strings.ToLower(u.Query().Get("format"))
-	return format != "png8" && format != "mp4"
+	return urlExt(raw) == ".gif"
 }
 
 func videoMedia(post redditPost) []string {
@@ -177,18 +169,14 @@ func previewMedia(post redditPost) []string {
 	}
 	var urls []string
 	for _, img := range post.Preview.Images {
-		// Same rule as richestVariant: a genuinely animated GIF beats the mp4,
-		// but the mp4 beats a still framed as a GIF.
-		switch {
-		case img.Variants.GIF != nil && isAnimatedGif(img.Variants.GIF.Source.URL):
-			urls = append(urls, img.Variants.GIF.Source.URL)
-		case img.Variants.MP4 != nil:
-			urls = append(urls, img.Variants.MP4.Source.URL)
-		case img.Variants.GIF != nil:
-			urls = append(urls, img.Variants.GIF.Source.URL)
-		default:
-			urls = append(urls, img.Source.URL)
+		src := mediaSource{U: img.Source.URL}
+		if img.Variants.GIF != nil {
+			src.Gif = img.Variants.GIF.Source.URL
 		}
+		if img.Variants.MP4 != nil {
+			src.Mp4 = img.Variants.MP4.Source.URL
+		}
+		urls = append(urls, richestVariant(src))
 	}
 	return urls
 }
@@ -273,15 +261,27 @@ func stripQuery(raw string) string {
 	return raw
 }
 
+// urlExt returns the file extension a URL names. Reddit's format parameter
+// wins over the path when it names a known media type: preview URLs reuse the
+// original's path, so .../abc.gif?format=png8 is a still PNG and
+// .../abc.gif?format=mp4 is a video.
 func urlExt(rawURL string) string {
-	if u, err := url.Parse(rawURL); err == nil {
-		return strings.ToLower(path.Ext(u.Path))
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return strings.ToLower(path.Ext(rawURL))
 	}
-	return strings.ToLower(path.Ext(rawURL))
+	format := strings.ToLower(u.Query().Get("format"))
+	if format == "png8" {
+		return ".png"
+	}
+	if ext := "." + format; mediaExts[ext] {
+		return ext
+	}
+	return strings.ToLower(path.Ext(u.Path))
 }
 
-// mediaExts are the extensions a download may be named by. The content-type
-// map below them must stay in step with this set.
+// mediaExts are the extensions a download may be named by. detectExtension
+// below maps content types onto this set.
 var mediaExts = map[string]bool{
 	".png": true, ".gif": true, ".jpg": true, ".jpeg": true, ".webp": true,
 	".avif": true, ".mp4": true, ".webm": true, ".mov": true,

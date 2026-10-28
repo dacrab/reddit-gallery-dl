@@ -48,24 +48,24 @@ type Fetcher struct {
 }
 
 func NewFetcher() *Fetcher {
-	transport := func() *http.Transport {
-		return &http.Transport{
-			Proxy:                 http.ProxyFromEnvironment,
-			MaxIdleConns:          64,
-			MaxIdleConnsPerHost:   8,
-			MaxConnsPerHost:       16,
-			IdleConnTimeout:       30 * time.Second,
-			TLSHandshakeTimeout:   10 * time.Second,
-			ResponseHeaderTimeout: 20 * time.Second,
-			ExpectContinueTimeout: time.Second,
-		}
+	// One transport, so every lookup and download shares a single connection
+	// pool; the clients differ only in timeout and redirect policy.
+	transport := &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		MaxIdleConns:          64,
+		MaxIdleConnsPerHost:   8,
+		MaxConnsPerHost:       16,
+		IdleConnTimeout:       30 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: 20 * time.Second,
+		ExpectContinueTimeout: time.Second,
 	}
 	return &Fetcher{
-		client:     &http.Client{Timeout: 30 * time.Second, Transport: transport(), CheckRedirect: guardRedirect(isRedditHost)},
-		noRedirect: &http.Client{Timeout: 10 * time.Second, Transport: transport(), CheckRedirect: refuseRedirect},
+		client:     &http.Client{Timeout: 30 * time.Second, Transport: transport, CheckRedirect: guardRedirect(isRedditHost)},
+		noRedirect: &http.Client{Timeout: 10 * time.Second, Transport: transport, CheckRedirect: refuseRedirect},
 		// Media may redirect to www.reddit.com/media, which proxies the file;
 		// the property that matters is that the chain never leaves Reddit.
-		mediaClient: &http.Client{Timeout: 60 * time.Second, Transport: transport(), CheckRedirect: guardRedirect(isRedditHost)},
+		mediaClient: &http.Client{Timeout: 60 * time.Second, Transport: transport, CheckRedirect: guardRedirect(isRedditHost)},
 	}
 }
 

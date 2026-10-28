@@ -412,7 +412,7 @@ func TestMediaRequestsAdvertiseAnImage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body.Close()
+	_ = body.Close()
 	if !strings.HasPrefix(accept, "image/") {
 		t.Errorf("media Accept = %q, want it to start with image/", accept)
 	}

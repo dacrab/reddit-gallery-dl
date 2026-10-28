@@ -55,7 +55,7 @@ func zipEntries(t *testing.T, body []byte) map[string]string {
 			t.Fatal(err)
 		}
 		content, err := io.ReadAll(rc)
-		rc.Close()
+		_ = rc.Close()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -337,6 +337,30 @@ func TestIndexRendersGallery(t *testing.T) {
 	}
 }
 
+func TestIndexRendersVideoVariantAsVideo(t *testing.T) {
+	// Reddit serves an animated gallery's mp4 through the original's .gif path
+	// with format=mp4. The page must treat it as a video, not an <img>.
+	f := testFetcher(roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return testResponse(r, http.StatusOK,
+			`{"data":[{"title":"Clip","is_gallery":true,"gallery_data":{"items":[{"media_id":"a"}]},"media_metadata":{"a":{"s":{"gif":"https://preview.redd.it/clip.gif?format=png8&s=x","mp4":"https://preview.redd.it/clip.gif?format=mp4&s=x"}}}}]}`), nil
+	}))
+	handler := routes(testTemplates(t), f)
+
+	form := url.Values{"url": {"https://www.reddit.com/r/pics/comments/1wu034e/x/"}}
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	body := rec.Body.String()
+	if !strings.Contains(body, `<video src="https://preview.redd.it/clip.gif?format=mp4`) {
+		t.Errorf("mp4 variant was not rendered as a video:\n%s", body)
+	}
+	if strings.Contains(body, `<div class="badge">GIF</div>`) {
+		t.Errorf("mp4 variant was labelled a GIF:\n%s", body)
+	}
+}
+
 func TestIndexRejectsBadURL(t *testing.T) {
 	f := testFetcher(roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		t.Errorf("unexpected request for a bad URL: %s", r.URL)
@@ -392,7 +416,7 @@ func TestIndexGETIsNotFound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("status = %d, want 404", resp.StatusCode)
 	}

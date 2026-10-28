@@ -53,7 +53,7 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(ctx); err != nil {
-		srv.Close()
+		_ = srv.Close()
 		log.Fatal(err)
 	}
 }
