@@ -327,33 +327,43 @@ func TestShareLinkFailure(t *testing.T) {
 
 // --- SSRF -----------------------------------------------------------------
 
-func TestStreamImageRefusesNonRedditHosts(t *testing.T) {
+// hostileURLs must be refused by every layer that accepts a user-supplied URL
+// directly: the form check and the fetcher. Keeping one list means a new class
+// of input cannot be covered at one layer and forgotten at another. The
+// redirect guard is tested separately because it sees already-parsed hosts.
+var hostileURLs = []string{
+	"http://127.0.0.1:8080/latest/meta-data/",
+	"https://169.254.169.254/latest/meta-data/iam/security-credentials/",
+	"http://localhost:5000/admin",
+	"http://[::1]:9000/",
+	"http://10.1.2.3/internal.png",
+	"http://i.redd.it/a.jpg",                            // plaintext
+	"https://www.reddit.com/r/pics/comments/1wu034e/x/", // Reddit, but not media
+	"https://evil.com/a.jpg",
+	"https://evil.com/i.redd.it/a.png",
+	"https://i.redd.it.evil.com/a.png",
+	"https://i.redd.it@evil.com/a.jpg",
+	"https://b.thumbs.redditmedia.com/a.png",
+	"//i.redd.it/a.jpg",
+	"file:///etc/passwd",
+	"gopher://127.0.0.1:11211/_stats",
+	"",
+}
+
+func TestStreamMediaRefusesNonRedditHosts(t *testing.T) {
 	f := testFetcher(roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		t.Errorf("fetcher reached %s; it must refuse before dialling", r.URL)
 		return testResponse(r, http.StatusOK, "SECRET"), nil
 	}))
 
-	hosts := []string{
-		"http://127.0.0.1:8080/latest/meta-data/",
-		"https://169.254.169.254/latest/meta-data/iam/",
-		"http://localhost/admin",
-		"http://[::1]:9000/",
-		"http://10.0.0.5/internal",
-		"https://evil.com/i.redd.it/a.png",
-		"https://i.redd.it.evil.com/a.png",
-		"https://b.thumbs.redditmedia.com/a.png",
-		"https://www.reddit.com/r/pics/comments/1wu034e/x/",
-		"file:///etc/passwd",
-		"gopher://127.0.0.1:11211/",
-	}
-	for _, raw := range hosts {
+	for _, raw := range hostileURLs {
 		if _, _, err := f.streamMedia(context.Background(), raw); err == nil {
 			t.Errorf("streamMedia(%q) succeeded; want refusal", raw)
 		}
 	}
 }
 
-func TestStreamImageAllowsRedditMedia(t *testing.T) {
+func TestStreamMediaAllowsRedditMedia(t *testing.T) {
 	f := testFetcher(roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		return testResponse(r, http.StatusOK, "IMAGEBYTES"), nil
 	}))
@@ -379,23 +389,35 @@ func TestStreamImageAllowsRedditMedia(t *testing.T) {
 }
 
 func TestRedirectGuard(t *testing.T) {
-	guard := guardRedirect(isRedditMediaHost)
+	media := guardRedirect(isRedditMediaHost)
 	req := func(host string) *http.Request {
 		r, _ := http.NewRequest("GET", "https://"+host+"/x", nil)
 		return r
 	}
-	if err := guard(req("i.redd.it"), nil); err != nil {
+	if err := media(req("i.redd.it"), nil); err != nil {
 		t.Errorf("media host rejected: %v", err)
 	}
 	for _, host := range []string{"evil.com", "169.254.169.254", "i.redd.it.evil.com", "www.reddit.com"} {
-		if err := guard(req(host), nil); err == nil {
-			t.Errorf("guard allowed %q", host)
+		if err := media(req(host), nil); err == nil {
+			t.Errorf("media guard allowed %q", host)
 		}
 	}
 	// Downgrading to plaintext must not be allowed either.
 	plain, _ := http.NewRequest("GET", "http://i.redd.it/x", nil)
-	if err := guard(plain, nil); err == nil {
-		t.Error("guard allowed a plaintext hop")
+	if err := media(plain, nil); err == nil {
+		t.Error("media guard allowed a plaintext hop")
+	}
+
+	// A media fetch may be redirected to www.reddit.com/media, which proxies
+	// the file; the chain just has to stay on Reddit.
+	site := guardRedirect(isRedditHost)
+	hop, _ := http.NewRequest("GET", "https://www.reddit.com/media?url=https%3A%2F%2Fi.redd.it%2Fa.jpg", nil)
+	if err := site(hop, nil); err != nil {
+		t.Errorf("reddit's own /media proxy was rejected: %v", err)
+	}
+	offsite, _ := http.NewRequest("GET", "https://evil.com/a.jpg", nil)
+	if err := site(offsite, nil); err == nil {
+		t.Error("site guard followed a redirect off Reddit")
 	}
 }
 
@@ -418,21 +440,6 @@ func TestMediaRequestsAdvertiseAnImage(t *testing.T) {
 	}
 	if strings.Contains(accept, "text/html") {
 		t.Errorf("media Accept = %q, must not offer text/html", accept)
-	}
-}
-
-// TestMediaRedirectMayUseRedditsMediaProxy covers the hop the Accept header
-// above exists to avoid: if Reddit proxies anyway, the chain must still be
-// followed as long as it stays on Reddit.
-func TestMediaRedirectMayUseRedditsMediaProxy(t *testing.T) {
-	guard := guardRedirect(isRedditHost)
-	hop, _ := http.NewRequest("GET", "https://www.reddit.com/media?url=https%3A%2F%2Fi.redd.it%2Fa.jpg", nil)
-	if err := guard(hop, nil); err != nil {
-		t.Errorf("reddit's own /media proxy was rejected: %v", err)
-	}
-	offsite, _ := http.NewRequest("GET", "https://evil.com/a.jpg", nil)
-	if err := guard(offsite, nil); err == nil {
-		t.Error("guard followed a redirect off Reddit")
 	}
 }
 

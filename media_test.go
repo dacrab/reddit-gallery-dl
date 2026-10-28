@@ -251,13 +251,10 @@ func TestOriginalURL(t *testing.T) {
 }
 
 func TestDetectExtension(t *testing.T) {
+	// URL-based detection itself is covered by TestURLExt; this pins the
+	// content-type fallback used when the URL names no usable extension.
 	tests := []struct{ url, ct, want string }{
-		{"https://i.redd.it/abc.png", "", ".png"},
-		{"https://i.redd.it/abc.jpg?width=640", "", ".jpg"},
-		{"https://v.redd.it/abc/DASH_720.mp4", "", ".mp4"},
-		{"https://i.redd.it/abc.gif", "", ".gif"},
-		// Reddit's format parameter overrides a path named after the original.
-		{"https://preview.redd.it/abc.gif?format=png8&s=x", "", ".png"},
+		// The URL's format parameter still wins over the response type.
 		{"https://preview.redd.it/abc.gif?format=mp4&s=x", "", ".mp4"},
 		{"https://i.redd.it/abc", "image/png", ".png"},
 		{"https://i.redd.it/abc", "image/jpeg; charset=utf-8", ".jpg"},

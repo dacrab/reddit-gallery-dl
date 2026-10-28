@@ -167,37 +167,21 @@ func TestDownloadZipRejectsNonRedditURLs(t *testing.T) {
 		return testResponse(r, http.StatusOK, "SECRET-INTERNAL-RESPONSE"), nil
 	}))
 
-	for _, hostile := range []string{
-		"http://127.0.0.1:8080/latest/meta-data/",
-		"https://169.254.169.254/latest/meta-data/iam/security-credentials/",
-		"http://localhost:5000/admin",
-		"http://[::1]:9000/",
-		"http://10.1.2.3/internal.png",
-		"https://evil.com/i.redd.it/a.png",
-		"https://i.redd.it.evil.com/a.png",
-		"https://b.thumbs.redditmedia.com/a.png",
-		"file:///etc/passwd",
-		"gopher://127.0.0.1:11211/_stats",
-	} {
+	for _, hostile := range hostileURLs {
 		rec := httptest.NewRecorder()
 		// A valid URL first, so the rejection cannot be blamed on an empty list.
 		handleDownloadZip(f)(rec, postForm(t, []string{"https://i.redd.it/ok.png", hostile}, "t"))
 		if rec.Code != http.StatusBadRequest {
 			t.Errorf("hostile URL %q: status = %d, want 400", hostile, rec.Code)
 		}
+		// A 400 is only possible if validation happens before the first ZIP
+		// byte, so the response must not advertise or contain an archive.
+		if ct := rec.Header().Get("Content-Type"); ct == "application/zip" {
+			t.Errorf("hostile URL %q: rejected request still advertised %s", hostile, ct)
+		}
 		if strings.Contains(rec.Body.String(), "SECRET-INTERNAL-RESPONSE") {
 			t.Errorf("hostile URL %q leaked internal content", hostile)
 		}
-	}
-}
-
-func TestDownloadZipRejectsBeforeWritingAnything(t *testing.T) {
-	// A 400 is only possible if validation happens before the first ZIP byte.
-	f := mediaFetcher()
-	rec := httptest.NewRecorder()
-	handleDownloadZip(f)(rec, postForm(t, []string{"https://evil.com/a.png"}, "t"))
-	if ct := rec.Header().Get("Content-Type"); ct == "application/zip" {
-		t.Errorf("rejected request still advertised %s", ct)
 	}
 }
 
@@ -296,14 +280,7 @@ func TestIsFetchableMediaURL(t *testing.T) {
 			t.Errorf("isFetchableMediaURL(%q) = false, want true", raw)
 		}
 	}
-	for _, raw := range []string{
-		"http://i.redd.it/a.jpg", // plaintext
-		"https://www.reddit.com/r/pics/comments/1wu034e/x/",
-		"https://evil.com/a.jpg",
-		"https://i.redd.it@evil.com/a.jpg",
-		"//i.redd.it/a.jpg",
-		"",
-	} {
+	for _, raw := range hostileURLs {
 		if isFetchableMediaURL(raw) {
 			t.Errorf("isFetchableMediaURL(%q) = true, want false", raw)
 		}
@@ -424,16 +401,12 @@ func TestIndexReportsBlockedRatherThanDeleted(t *testing.T) {
 	}
 }
 
-func TestIndexGETIsNotFound(t *testing.T) {
-	srv := httptest.NewServer(routes(testTemplates(t), mediaFetcher()))
-	defer srv.Close()
-	resp, err := srv.Client().Get(srv.URL + "/somewhere-else")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusNotFound {
-		t.Errorf("status = %d, want 404", resp.StatusCode)
+func TestIndexUnknownPathIsNotFound(t *testing.T) {
+	rec := httptest.NewRecorder()
+	routes(testTemplates(t), mediaFetcher()).
+		ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/somewhere-else", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", rec.Code)
 	}
 }
 
