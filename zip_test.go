@@ -18,9 +18,9 @@ import (
 	"time"
 )
 
-// imageFetcher serves fake Reddit media. failed URLs answer 404 so the
+// mediaFetcher serves fake Reddit media. failed URLs answer 404 so the
 // download-skip path can be exercised.
-func imageFetcher(failing ...string) *Fetcher {
+func mediaFetcher(failing ...string) *Fetcher {
 	return testFetcher(roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		for _, f := range failing {
 			if strings.Contains(r.URL.Path, f) {
@@ -31,13 +31,13 @@ func imageFetcher(failing ...string) *Fetcher {
 	}))
 }
 
-func postForm(t *testing.T, srvURL string, imageURLs []string, title string) *http.Request {
+func postForm(t *testing.T, mediaURLs []string, title string) *http.Request {
 	t.Helper()
 	form := url.Values{"page_title": {title}}
-	for _, u := range imageURLs {
-		form.Add("image_urls", u)
+	for _, u := range mediaURLs {
+		form.Add("media_urls", u)
 	}
-	req := httptest.NewRequest(http.MethodPost, srvURL+"/download-zip", strings.NewReader(form.Encode()))
+	req := httptest.NewRequest(http.MethodPost, "/download-zip", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	return req
 }
@@ -75,10 +75,10 @@ func galleryURLs(n int) []string {
 // TestZipKeepsSelectionOrder is the ordinary case: every download succeeds and
 // media_NNN lines up with the Nth URL the user ticked.
 func TestZipKeepsSelectionOrder(t *testing.T) {
-	f := imageFetcher()
+	f := mediaFetcher()
 	urls := galleryURLs(5)
 	rec := httptest.NewRecorder()
-	handleDownloadZip(f)(rec, postForm(t, "http://x", urls, "My Post"))
+	handleDownloadZip(f)(rec, postForm(t, urls, "My Post"))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %q", rec.Code, rec.Body.String())
@@ -101,10 +101,10 @@ func TestZipKeepsSelectionOrder(t *testing.T) {
 // dead image at the head meant every later image was buffered and then thrown
 // away. Signed Reddit URLs expire, so a failing first image was routine.
 func TestZipSurvivesAFirstImageFailure(t *testing.T) {
-	f := imageFetcher("img00")
+	f := mediaFetcher("img00")
 	urls := galleryURLs(4)
 	rec := httptest.NewRecorder()
-	handleDownloadZip(f)(rec, postForm(t, "http://x", urls, "My Post"))
+	handleDownloadZip(f)(rec, postForm(t, urls, "My Post"))
 
 	entries := zipEntries(t, rec.Body.Bytes())
 	if len(entries) != 3 {
@@ -125,10 +125,10 @@ func TestZipSurvivesAFirstImageFailure(t *testing.T) {
 }
 
 func TestZipSurvivesAMiddleAndLastFailure(t *testing.T) {
-	f := imageFetcher("img01", "img03")
+	f := mediaFetcher("img01", "img03")
 	urls := galleryURLs(5)
 	rec := httptest.NewRecorder()
-	handleDownloadZip(f)(rec, postForm(t, "http://x", urls, "My Post"))
+	handleDownloadZip(f)(rec, postForm(t, urls, "My Post"))
 
 	entries := zipEntries(t, rec.Body.Bytes())
 	if len(entries) != 3 {
@@ -147,9 +147,9 @@ func TestZipSurvivesAMiddleAndLastFailure(t *testing.T) {
 
 func TestZipSurvivesEveryDownloadFailing(t *testing.T) {
 	urls := galleryURLs(3)
-	f := imageFetcher("img00", "img01", "img02")
+	f := mediaFetcher("img00", "img01", "img02")
 	rec := httptest.NewRecorder()
-	handleDownloadZip(f)(rec, postForm(t, "http://x", urls, "My Post"))
+	handleDownloadZip(f)(rec, postForm(t, urls, "My Post"))
 
 	// An empty archive is still a valid, openable ZIP.
 	entries := zipEntries(t, rec.Body.Bytes())
@@ -160,7 +160,7 @@ func TestZipSurvivesEveryDownloadFailing(t *testing.T) {
 
 func TestDownloadZipRejectsNonRedditURLs(t *testing.T) {
 	// The regression test for the open-proxy hole: /download-zip took
-	// image_urls straight from the form and fetched whatever it was given,
+	// media_urls straight from the form and fetched whatever it was given,
 	// including loopback and link-local addresses.
 	f := testFetcher(roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		t.Errorf("fetcher dialled %s; the request should have been rejected up front", r.URL)
@@ -181,7 +181,7 @@ func TestDownloadZipRejectsNonRedditURLs(t *testing.T) {
 	} {
 		rec := httptest.NewRecorder()
 		// A valid URL first, so the rejection cannot be blamed on an empty list.
-		handleDownloadZip(f)(rec, postForm(t, "http://x", []string{"https://i.redd.it/ok.png", hostile}, "t"))
+		handleDownloadZip(f)(rec, postForm(t, []string{"https://i.redd.it/ok.png", hostile}, "t"))
 		if rec.Code != http.StatusBadRequest {
 			t.Errorf("hostile URL %q: status = %d, want 400", hostile, rec.Code)
 		}
@@ -193,18 +193,18 @@ func TestDownloadZipRejectsNonRedditURLs(t *testing.T) {
 
 func TestDownloadZipRejectsBeforeWritingAnything(t *testing.T) {
 	// A 400 is only possible if validation happens before the first ZIP byte.
-	f := imageFetcher()
+	f := mediaFetcher()
 	rec := httptest.NewRecorder()
-	handleDownloadZip(f)(rec, postForm(t, "http://x", []string{"https://evil.com/a.png"}, "t"))
+	handleDownloadZip(f)(rec, postForm(t, []string{"https://evil.com/a.png"}, "t"))
 	if ct := rec.Header().Get("Content-Type"); ct == "application/zip" {
 		t.Errorf("rejected request still advertised %s", ct)
 	}
 }
 
-func TestSingleImageIsServedDirectly(t *testing.T) {
-	f := imageFetcher()
+func TestSingleMediaIsServedDirectly(t *testing.T) {
+	f := mediaFetcher()
 	rec := httptest.NewRecorder()
-	handleDownloadZip(f)(rec, postForm(t, "http://x", []string{"https://i.redd.it/solo.jpg"}, "t"))
+	handleDownloadZip(f)(rec, postForm(t, []string{"https://i.redd.it/solo.jpg"}, "t"))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
@@ -230,7 +230,7 @@ func TestSingleMediaNamesTheServedRendition(t *testing.T) {
 	}
 	for _, tt := range tests {
 		rec := httptest.NewRecorder()
-		handleDownloadZip(imageFetcher())(rec, postForm(t, "http://x", []string{tt.url}, "t"))
+		handleDownloadZip(mediaFetcher())(rec, postForm(t, []string{tt.url}, "t"))
 
 		if ct := rec.Header().Get("Content-Type"); ct != tt.contentType {
 			t.Errorf("%s: content-type = %q, want %q", tt.url, ct, tt.contentType)
@@ -246,9 +246,9 @@ func TestSingleMediaNamesTheServedRendition(t *testing.T) {
 // the limit is refused outright rather than answered with a ZIP that silently
 // contains fewer files than the user selected.
 func TestDownloadZipRejectsTooManyFiles(t *testing.T) {
-	f := imageFetcher()
+	f := mediaFetcher()
 	rec := httptest.NewRecorder()
-	handleDownloadZip(f)(rec, postForm(t, "http://x", galleryURLs(maxURLs+20), "t"))
+	handleDownloadZip(f)(rec, postForm(t, galleryURLs(maxURLs+20), "t"))
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
@@ -257,17 +257,17 @@ func TestDownloadZipRejectsTooManyFiles(t *testing.T) {
 	}
 }
 
-func TestDownloadZipRequiresImages(t *testing.T) {
-	f := imageFetcher()
+func TestDownloadZipRequiresMedia(t *testing.T) {
+	f := mediaFetcher()
 	rec := httptest.NewRecorder()
-	handleDownloadZip(f)(rec, postForm(t, "http://x", nil, "t"))
+	handleDownloadZip(f)(rec, postForm(t, nil, "t"))
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
 }
 
 func TestDownloadZipRedirectsNonPost(t *testing.T) {
-	f := imageFetcher()
+	f := mediaFetcher()
 	rec := httptest.NewRecorder()
 	handleDownloadZip(f)(rec, httptest.NewRequest(http.MethodGet, "/download-zip", nil))
 	if rec.Code != http.StatusSeeOther {
@@ -276,24 +276,24 @@ func TestDownloadZipRedirectsNonPost(t *testing.T) {
 }
 
 func TestDownloadZipContentDisposition(t *testing.T) {
-	f := imageFetcher()
+	f := mediaFetcher()
 	rec := httptest.NewRecorder()
-	handleDownloadZip(f)(rec, postForm(t, "http://x", galleryURLs(2), "My Great Post! (2024)"))
+	handleDownloadZip(f)(rec, postForm(t, galleryURLs(2), "My Great Post! (2024)"))
 	cd := rec.Header().Get("Content-Disposition")
 	if !strings.Contains(cd, "My_Great_Post_2024.zip") {
 		t.Errorf("content-disposition = %q", cd)
 	}
 }
 
-func TestIsFetchableImageURL(t *testing.T) {
+func TestIsFetchableMediaURL(t *testing.T) {
 	for _, raw := range []string{
 		"https://i.redd.it/a.jpg",
 		"https://preview.redd.it/a.jpg?width=640&auto=webp",
 		"https://v.redd.it/a/DASH_720.mp4",
 		"https://external-preview.redd.it/a.png",
 	} {
-		if !isFetchableImageURL(raw) {
-			t.Errorf("isFetchableImageURL(%q) = false, want true", raw)
+		if !isFetchableMediaURL(raw) {
+			t.Errorf("isFetchableMediaURL(%q) = false, want true", raw)
 		}
 	}
 	for _, raw := range []string{
@@ -304,8 +304,8 @@ func TestIsFetchableImageURL(t *testing.T) {
 		"//i.redd.it/a.jpg",
 		"",
 	} {
-		if isFetchableImageURL(raw) {
-			t.Errorf("isFetchableImageURL(%q) = true, want false", raw)
+		if isFetchableMediaURL(raw) {
+			t.Errorf("isFetchableMediaURL(%q) = true, want false", raw)
 		}
 	}
 }
@@ -330,9 +330,18 @@ func TestCleanFilename(t *testing.T) {
 
 func testTemplates(t *testing.T) *template.Template {
 	t.Helper()
-	return template.Must(template.New("").
-		Funcs(template.FuncMap{"urlExt": urlExt}).
-		ParseGlob("templates/*.html"))
+	return template.Must(loadTemplates())
+}
+
+// postIndex submits a URL to the index handler the way the form does.
+func postIndex(t *testing.T, handler http.Handler, rawURL string) *httptest.ResponseRecorder {
+	t.Helper()
+	form := url.Values{"url": {rawURL}}
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	return rec
 }
 
 func TestIndexRendersGallery(t *testing.T) {
@@ -342,17 +351,13 @@ func TestIndexRendersGallery(t *testing.T) {
 	}))
 	handler := routes(testTemplates(t), f)
 
-	form := url.Values{"url": {"https://www.reddit.com/r/pics/comments/1wu034e/x/"}}
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
+	rec := postIndex(t, handler, "https://www.reddit.com/r/pics/comments/1wu034e/x/")
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"Six snaps", "https://i.redd.it/aaaabbbbcccc.jpg"} {
+	for _, want := range []string{"Six snaps", "https://i.redd.it/aaaabbbbcccc.jpg", "Loaded 1 file!"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("response missing %q", want)
 		}
@@ -368,11 +373,7 @@ func TestIndexRendersVideoVariantAsVideo(t *testing.T) {
 	}))
 	handler := routes(testTemplates(t), f)
 
-	form := url.Values{"url": {"https://www.reddit.com/r/pics/comments/1wu034e/x/"}}
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
+	rec := postIndex(t, handler, "https://www.reddit.com/r/pics/comments/1wu034e/x/")
 
 	body := rec.Body.String()
 	if !strings.Contains(body, `<video src="https://preview.redd.it/clip.gif?format=mp4`) {
@@ -390,11 +391,7 @@ func TestIndexRejectsBadURL(t *testing.T) {
 	}))
 	handler := routes(testTemplates(t), f)
 
-	form := url.Values{"url": {"https://example.com/not/reddit"}}
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
+	rec := postIndex(t, handler, "https://example.com/not/reddit")
 
 	if !strings.Contains(rec.Body.String(), "valid Reddit link") {
 		t.Errorf("expected the invalid-link alert, got:\n%s", rec.Body.String())
@@ -416,11 +413,7 @@ func TestIndexReportsBlockedRatherThanDeleted(t *testing.T) {
 	}))
 	handler := routes(testTemplates(t), f)
 
-	form := url.Values{"url": {"https://www.reddit.com/r/pics/comments/1wu034e/x/"}}
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
+	rec := postIndex(t, handler, "https://www.reddit.com/r/pics/comments/1wu034e/x/")
 
 	body := rec.Body.String()
 	if strings.Contains(body, "Post not found") {
@@ -432,7 +425,7 @@ func TestIndexReportsBlockedRatherThanDeleted(t *testing.T) {
 }
 
 func TestIndexGETIsNotFound(t *testing.T) {
-	srv := httptest.NewServer(routes(testTemplates(t), imageFetcher()))
+	srv := httptest.NewServer(routes(testTemplates(t), mediaFetcher()))
 	defer srv.Close()
 	resp, err := srv.Client().Get(srv.URL + "/somewhere-else")
 	if err != nil {
@@ -476,7 +469,7 @@ func TestContextCancellationDoesNotHang(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	rec := httptest.NewRecorder()
-	req := postForm(t, "http://x", galleryURLs(6), "t").WithContext(ctx)
+	req := postForm(t, galleryURLs(6), "t").WithContext(ctx)
 
 	done := make(chan struct{})
 	go func() {
@@ -496,14 +489,14 @@ func TestContextCancellationDoesNotHang(t *testing.T) {
 // TestZipHandlesMoreURLsThanWorkers is a deadlock guard: more URLs than
 // workers must still complete, whatever the order results arrive in.
 func TestZipHandlesMoreURLsThanWorkers(t *testing.T) {
-	f := imageFetcher("img00", "img01")
+	f := mediaFetcher("img00", "img01")
 	urls := galleryURLs(maxParallelDownloads * 6)
 
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		rec := httptest.NewRecorder()
-		handleDownloadZip(f)(rec, postForm(t, "http://x", urls, "t"))
+		handleDownloadZip(f)(rec, postForm(t, urls, "t"))
 		if got := len(zipEntries(t, rec.Body.Bytes())); got != len(urls)-2 {
 			t.Errorf("got %d entries, want %d", got, len(urls)-2)
 		}
@@ -535,7 +528,7 @@ func TestZipCapsConcurrentStreams(t *testing.T) {
 	}))
 
 	rec := httptest.NewRecorder()
-	handleDownloadZip(f)(rec, postForm(t, "http://x", galleryURLs(maxURLs), "t"))
+	handleDownloadZip(f)(rec, postForm(t, galleryURLs(maxURLs), "t"))
 
 	if got := len(zipEntries(t, rec.Body.Bytes())); got != maxURLs {
 		t.Fatalf("got %d entries, want %d", got, maxURLs)

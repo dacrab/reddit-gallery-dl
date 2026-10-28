@@ -62,7 +62,7 @@ type galleryItem struct {
 }
 
 type mediaSource struct {
-	U   string `json:"u"`
+	URL string `json:"u"`
 	Gif string `json:"gif"`
 	Mp4 string `json:"mp4"`
 }
@@ -128,7 +128,7 @@ func richestVariant(s mediaSource) string {
 	case s.Gif != "":
 		return s.Gif
 	default:
-		return s.U
+		return s.URL
 	}
 }
 
@@ -167,7 +167,7 @@ func previewMedia(post redditPost) []string {
 	}
 	var urls []string
 	for _, img := range post.Preview.Images {
-		src := mediaSource{U: img.Source.URL}
+		src := mediaSource{URL: img.Source.URL}
 		if img.Variants.GIF != nil {
 			src.Gif = img.Variants.GIF.Source.URL
 		}
@@ -179,17 +179,11 @@ func previewMedia(post redditPost) []string {
 	return urls
 }
 
-// previewHasMP4 reports whether Reddit offers an mp4 rendition of the post's
-// preview, so a direct GIF can defer to it.
+// previewHasMP4 reports whether the preview group would offer an mp4, which a
+// direct GIF should defer to.
 func previewHasMP4(post redditPost) bool {
-	if post.Preview == nil {
-		return false
-	}
-	if rvp := post.Preview.RedditVideoPreview; rvp != nil && rvp.FallbackURL != "" {
-		return true
-	}
-	for _, img := range post.Preview.Images {
-		if img.Variants.MP4 != nil {
+	for _, u := range previewMedia(post) {
+		if urlExt(u) == ".mp4" {
 			return true
 		}
 	}

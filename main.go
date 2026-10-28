@@ -12,10 +12,14 @@ import (
 	"time"
 )
 
-func main() {
-	tmpl := template.Must(template.New("").
+func loadTemplates() (*template.Template, error) {
+	return template.New("").
 		Funcs(template.FuncMap{"urlExt": urlExt}).
-		ParseGlob("templates/*.html"))
+		ParseGlob("templates/*.html")
+}
+
+func main() {
+	tmpl := template.Must(loadTemplates())
 
 	port := os.Getenv("PORT")
 	if port == "" {

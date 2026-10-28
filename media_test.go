@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestExtractImages(t *testing.T) {
+func TestExtractMedia(t *testing.T) {
 	tests := []struct {
 		name string
 		post redditPost
@@ -44,8 +44,8 @@ func TestExtractImages(t *testing.T) {
 					{MediaID: "a"}, {MediaID: "b"},
 				}},
 				MediaMetadata: map[string]mediaMetadata{
-					"a": {S: mediaSource{U: "https://i.redd.it/a.jpg", Gif: "https://i.redd.it/a.gif", Mp4: "https://i.redd.it/a.mp4"}},
-					"b": {S: mediaSource{U: "https://i.redd.it/b.jpg"}},
+					"a": {S: mediaSource{URL: "https://i.redd.it/a.jpg", Gif: "https://i.redd.it/a.gif", Mp4: "https://i.redd.it/a.mp4"}},
+					"b": {S: mediaSource{URL: "https://i.redd.it/b.jpg"}},
 				},
 			},
 			want: []string{"https://i.redd.it/a.mp4", "https://i.redd.it/b.jpg"},
@@ -57,7 +57,7 @@ func TestExtractImages(t *testing.T) {
 				GalleryData: &galleryData{Items: []galleryItem{{MediaID: "a"}}},
 				MediaMetadata: map[string]mediaMetadata{
 					"a": {S: mediaSource{
-						U:   "https://i.redd.it/a.jpg",
+						URL: "https://i.redd.it/a.jpg",
 						Gif: "https://preview.redd.it/a.gif?s=abc",
 						Mp4: "https://preview.redd.it/a.mp4?s=abc",
 					}},
@@ -97,7 +97,7 @@ func TestExtractImages(t *testing.T) {
 			post: redditPost{
 				IsGallery:     true,
 				GalleryData:   &galleryData{Items: []galleryItem{{MediaID: "gone"}, {MediaID: "here"}}},
-				MediaMetadata: map[string]mediaMetadata{"here": {S: mediaSource{U: "https://i.redd.it/here.jpg"}}},
+				MediaMetadata: map[string]mediaMetadata{"here": {S: mediaSource{URL: "https://i.redd.it/here.jpg"}}},
 			},
 			want: []string{"https://i.redd.it/here.jpg"},
 		},
@@ -109,9 +109,9 @@ func TestExtractImages(t *testing.T) {
 					{MediaID: "third"}, {MediaID: "first"}, {MediaID: "second"},
 				}},
 				MediaMetadata: map[string]mediaMetadata{
-					"first":  {S: mediaSource{U: "https://i.redd.it/1.jpg"}},
-					"second": {S: mediaSource{U: "https://i.redd.it/2.jpg"}},
-					"third":  {S: mediaSource{U: "https://i.redd.it/3.jpg"}},
+					"first":  {S: mediaSource{URL: "https://i.redd.it/1.jpg"}},
+					"second": {S: mediaSource{URL: "https://i.redd.it/2.jpg"}},
+					"third":  {S: mediaSource{URL: "https://i.redd.it/3.jpg"}},
 				},
 			},
 			want: []string{"https://i.redd.it/3.jpg", "https://i.redd.it/1.jpg", "https://i.redd.it/2.jpg"},
@@ -211,7 +211,7 @@ func TestExtractImages(t *testing.T) {
 			}
 			for i := range tt.want {
 				if got[i] != tt.want[i] {
-					t.Errorf("image %d = %q, want %q", i, got[i], tt.want[i])
+					t.Errorf("media %d = %q, want %q", i, got[i], tt.want[i])
 				}
 			}
 		})

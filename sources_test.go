@@ -347,8 +347,8 @@ func TestStreamImageRefusesNonRedditHosts(t *testing.T) {
 		"gopher://127.0.0.1:11211/",
 	}
 	for _, raw := range hosts {
-		if _, _, err := f.streamImage(context.Background(), raw); err == nil {
-			t.Errorf("streamImage(%q) succeeded; want refusal", raw)
+		if _, _, err := f.streamMedia(context.Background(), raw); err == nil {
+			t.Errorf("streamMedia(%q) succeeded; want refusal", raw)
 		}
 	}
 }
@@ -362,18 +362,18 @@ func TestStreamImageAllowsRedditMedia(t *testing.T) {
 		"https://preview.redd.it/abc123.jpg?width=640&auto=webp",
 		"https://v.redd.it/abc/DASH_720.mp4",
 	} {
-		body, ext, err := f.streamImage(context.Background(), raw)
+		body, ext, err := f.streamMedia(context.Background(), raw)
 		if err != nil {
-			t.Errorf("streamImage(%q): %v", raw, err)
+			t.Errorf("streamMedia(%q): %v", raw, err)
 			continue
 		}
 		got, _ := io.ReadAll(body)
 		_ = body.Close()
 		if string(got) != "IMAGEBYTES" {
-			t.Errorf("streamImage(%q) body = %q", raw, got)
+			t.Errorf("streamMedia(%q) body = %q", raw, got)
 		}
 		if ext == "" {
-			t.Errorf("streamImage(%q) returned no extension", raw)
+			t.Errorf("streamMedia(%q) returned no extension", raw)
 		}
 	}
 }
@@ -408,7 +408,7 @@ func TestMediaRequestsAdvertiseAnImage(t *testing.T) {
 		accept = r.Header.Get("Accept")
 		return testResponse(r, http.StatusOK, "BYTES"), nil
 	}))
-	body, _, err := f.streamImage(context.Background(), "https://i.redd.it/abc123.jpg")
+	body, _, err := f.streamMedia(context.Background(), "https://i.redd.it/abc123.jpg")
 	if err != nil {
 		t.Fatal(err)
 	}

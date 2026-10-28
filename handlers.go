@@ -11,10 +11,10 @@ import (
 func routes(tmpl *template.Template, f *Fetcher) *http.ServeMux {
 	mux := http.NewServeMux()
 	files := http.StripPrefix("/static/", http.FileServer(http.Dir("./static")))
-	mux.Handle("/static/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/static/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		files.ServeHTTP(w, r)
-	}))
+	})
 	mux.HandleFunc("/", handleIndex(tmpl, f))
 	mux.HandleFunc("/download-zip", handleDownloadZip(f))
 	return mux
@@ -66,11 +66,18 @@ func handleIndex(tmpl *template.Template, f *Fetcher) http.HandlerFunc {
 			Media: gallery.Media,
 			URL:   rawURL,
 			Alert: &alert{
-				Message: fmt.Sprintf("Loaded %d files!", len(gallery.Media)),
+				Message: loadedMessage(len(gallery.Media)),
 				Type:    "success",
 			},
 		})
 	}
+}
+
+func loadedMessage(n int) string {
+	if n == 1 {
+		return "Loaded 1 file!"
+	}
+	return fmt.Sprintf("Loaded %d files!", n)
 }
 
 func alertForError(err error) *alert {

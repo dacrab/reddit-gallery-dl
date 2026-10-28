@@ -254,7 +254,7 @@ func fetchFromRedditJSON(ctx context.Context, f *Fetcher, ref postRef) (*gallery
 // The subreddit must be in the path: a slug-free URL answers 200 with a
 // "Page not found" body, looking like success while returning nothing.
 //
-// Zero images is never proof of a media-less post — the markup may be a text
+// Zero media is never proof of a media-less post — the markup may be a text
 // post, a block page or a redesign — so every failure here is inconclusive.
 func fetchFromEmbed(ctx context.Context, f *Fetcher, ref postRef) (*gallery, error) {
 	if ref.subreddit == "" {
@@ -370,9 +370,9 @@ func redirectedToLogin(resp *http.Response) bool {
 	return resp.Request != nil && strings.Contains(resp.Request.URL.Path, "/login")
 }
 
-// streamImage opens a Reddit-hosted image for reading. The caller owns the
+// streamMedia opens a Reddit-hosted file for reading. The caller owns the
 // returned body and must close it.
-func (f *Fetcher) streamImage(ctx context.Context, rawURL string) (io.ReadCloser, string, error) {
+func (f *Fetcher) streamMedia(ctx context.Context, rawURL string) (io.ReadCloser, string, error) {
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
 		return nil, "", ErrInvalidURL

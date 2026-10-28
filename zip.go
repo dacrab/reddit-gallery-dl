@@ -45,9 +45,9 @@ func handleDownloadZip(f *Fetcher) http.HandlerFunc {
 			http.Error(w, "Invalid form data", http.StatusBadRequest)
 			return
 		}
-		urls := r.Form["image_urls"]
+		urls := r.Form["media_urls"]
 		if len(urls) == 0 {
-			http.Error(w, "No images selected", http.StatusBadRequest)
+			http.Error(w, "No files selected", http.StatusBadRequest)
 			return
 		}
 		if len(urls) > maxURLs {
@@ -58,7 +58,7 @@ func handleDownloadZip(f *Fetcher) http.HandlerFunc {
 		// header is out, the status code is already committed. This is also the
 		// only thing standing between this endpoint and being an open proxy.
 		for _, raw := range urls {
-			if !isFetchableImageURL(raw) {
+			if !isFetchableMediaURL(raw) {
 				http.Error(w, "Refusing to download a non-Reddit URL", http.StatusBadRequest)
 				return
 			}
@@ -71,15 +71,15 @@ func handleDownloadZip(f *Fetcher) http.HandlerFunc {
 	}
 }
 
-// isFetchableImageURL reports whether the download endpoint will fetch raw on
+// isFetchableMediaURL reports whether the download endpoint will fetch raw on
 // the user's behalf, re-checking the same host rule the fetcher enforces.
-func isFetchableImageURL(raw string) bool {
+func isFetchableMediaURL(raw string) bool {
 	u, err := url.Parse(raw)
 	return err == nil && u.Scheme == "https" && isRedditMediaHost(u.Host)
 }
 
-// streamZip downloads the selected images concurrently and writes them into a
-// ZIP as they finish, preserving the order the user selected them in.
+// streamZip downloads the selected media concurrently and writes it into a
+// ZIP as it finishes, preserving the order the user selected it in.
 func streamZip(ctx context.Context, f *Fetcher, w http.ResponseWriter, title string, urls []string) {
 	w.Header().Set("Content-Type", "application/zip")
 	w.Header().Set("Content-Disposition",
@@ -110,9 +110,9 @@ func streamZip(ctx context.Context, f *Fetcher, w http.ResponseWriter, title str
 					return
 				}
 				rawURL := urls[index]
-				body, ext, err := f.streamImage(ctx, rawURL)
+				body, ext, err := f.streamMedia(ctx, rawURL)
 				if err != nil {
-					if !errors.Is(err, context.Canceled) && !isClientDisconnect(err) {
+					if !isClientDisconnect(err) {
 						log.Printf("skip %s: %v", rawURL, err)
 					}
 					results <- download{index: index, url: rawURL, err: err}
@@ -140,7 +140,7 @@ func streamZip(ctx context.Context, f *Fetcher, w http.ResponseWriter, title str
 			return err
 		}()
 		if cerr := d.body.Close(); cerr != nil && !isClientDisconnect(cerr) {
-			log.Printf("image close error: %v", cerr)
+			log.Printf("media close error: %v", cerr)
 		}
 		if err != nil && !isClientDisconnect(err) {
 			log.Printf("zip write error (%s): %v", d.url, err)
@@ -171,14 +171,14 @@ func streamZip(ctx context.Context, f *Fetcher, w http.ResponseWriter, title str
 // serveSingleMedia streams a single file straight through, named after the
 // URL rather than zipped.
 func serveSingleMedia(ctx context.Context, f *Fetcher, w http.ResponseWriter, rawURL string) {
-	body, ext, err := f.streamImage(ctx, rawURL)
+	body, ext, err := f.streamMedia(ctx, rawURL)
 	if err != nil {
-		http.Error(w, "Failed to fetch image", http.StatusBadGateway)
+		http.Error(w, "Failed to fetch media", http.StatusBadGateway)
 		return
 	}
 	defer func() {
 		if err := body.Close(); err != nil && !isClientDisconnect(err) {
-			log.Printf("image close error: %v", err)
+			log.Printf("media close error: %v", err)
 		}
 	}()
 
@@ -206,9 +206,6 @@ func isClientDisconnect(err error) bool {
 }
 
 func cleanFilename(s string) string {
-	if s == "" {
-		return "reddit_gallery"
-	}
 	cleaned := strings.Map(func(r rune) rune {
 		switch {
 		case unicode.IsLetter(r) || unicode.IsDigit(r) || r == '-' || r == '_':
