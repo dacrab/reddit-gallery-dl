@@ -115,18 +115,14 @@ func galleryMedia(post redditPost) []string {
 	return urls
 }
 
-// richestVariant prefers an animated variant over the still frame, so a GIF
-// gallery downloads as a GIF rather than as its poster image.
+// richestVariant picks the best downloadable variant of one gallery item.
 //
-// s.gif is not a promise of animation: Reddit usually points it at a
-// format=png8 still, and a .gif can name either. Only a GIF whose own URL says
-// it is an animated GIF is trusted; a GIF of any other shape downloads as the
-// mp4 when one exists, since that is the same animation at a fraction of the
-// size and plays everywhere.
+// When Reddit provides an mp4 rendition it is the same animation at a fraction
+// of the size: GIF stores each frame as a full image, so originals routinely
+// run to tens of megabytes. The mp4 wins when present; the GIF (original or
+// still) is the fallback, then the plain URL.
 func richestVariant(s mediaSource) string {
 	switch {
-	case isAnimatedGif(s.Gif):
-		return s.Gif
 	case s.Mp4 != "":
 		return s.Mp4
 	case s.Gif != "":
@@ -136,16 +132,11 @@ func richestVariant(s mediaSource) string {
 	}
 }
 
-// isAnimatedGif reports whether raw names an animated GIF rather than a still
-// or video re-served through the GIF pipeline. urlExt reads Reddit's format
-// parameter, so a .gif path with format=png8 or format=mp4 is not a GIF.
-func isAnimatedGif(raw string) bool {
-	return urlExt(raw) == ".gif"
-}
-
 func videoMedia(post redditPost) []string {
 	if post.IsVideo && post.Media != nil && post.Media.RedditVideo != nil {
-		return []string{stripQuery(post.Media.RedditVideo.FallbackURL)}
+		// Keep the query: Reddit serves GIF posts through preview.redd.it, where
+		// format=mp4 and the s= signature are both required.
+		return []string{post.Media.RedditVideo.FallbackURL}
 	}
 	return nil
 }
@@ -153,8 +144,15 @@ func videoMedia(post redditPost) []string {
 // directMedia is the post's own link, which for an image post is the original
 // upload. redditMediaURLs filters it to Reddit hosts, so a post linking
 // somewhere external falls through to its Reddit-hosted preview instead.
+//
+// A direct GIF gives way to the preview's mp4 when there is one: the original
+// GIF is the full upload and can be tens of megabytes, while the mp4 is the
+// same animation transcoded by Reddit.
 func directMedia(post redditPost) []string {
 	if post.URL == "" {
+		return nil
+	}
+	if urlExt(post.URL) == ".gif" && previewHasMP4(post) {
 		return nil
 	}
 	return []string{post.URL}
@@ -165,7 +163,7 @@ func previewMedia(post redditPost) []string {
 		return nil
 	}
 	if rvp := post.Preview.RedditVideoPreview; rvp != nil && rvp.FallbackURL != "" {
-		return []string{stripQuery(rvp.FallbackURL)}
+		return []string{rvp.FallbackURL}
 	}
 	var urls []string
 	for _, img := range post.Preview.Images {
@@ -179,6 +177,23 @@ func previewMedia(post redditPost) []string {
 		urls = append(urls, richestVariant(src))
 	}
 	return urls
+}
+
+// previewHasMP4 reports whether Reddit offers an mp4 rendition of the post's
+// preview, so a direct GIF can defer to it.
+func previewHasMP4(post redditPost) bool {
+	if post.Preview == nil {
+		return false
+	}
+	if rvp := post.Preview.RedditVideoPreview; rvp != nil && rvp.FallbackURL != "" {
+		return true
+	}
+	for _, img := range post.Preview.Images {
+		if img.Variants.MP4 != nil {
+			return true
+		}
+	}
+	return false
 }
 
 // redditMediaURLs normalises a batch of candidate URLs: it unescapes them,
@@ -208,15 +223,20 @@ func redditMediaURLs(candidates []string) []string {
 // untouched upload, and both name the same media ID. The ID is the final
 // hyphen-separated path segment, with or without the embed page's post slug.
 //
-// The rewrite is skipped for format=png8, which names a still that exists only
-// under preview.redd.it: rewriting it to i.redd.it produces a 404. The original
-// is left in place instead, since a resized still beats no image at all.
+// The rewrite is skipped when no i.redd.it original exists: format=png8 names a
+// still that lives only under preview.redd.it, and mp4/webm/mov are renditions
+// that only preview.redd.it serves. Rewriting either produces a 404, so the
+// preview URL (and its signature) is kept instead.
 func originalURL(raw string) string {
 	u, err := url.Parse(raw)
 	if err != nil || !strings.EqualFold(u.Host, "preview.redd.it") {
 		return raw
 	}
 	if strings.EqualFold(u.Query().Get("format"), "png8") {
+		return raw
+	}
+	switch urlExt(raw) {
+	case ".mp4", ".webm", ".mov":
 		return raw
 	}
 	id, ext, ok := strings.Cut(strings.TrimPrefix(u.Path, "/"), ".")
@@ -250,15 +270,6 @@ func isMediaID(s string) bool {
 		}
 	}
 	return true
-}
-
-func stripQuery(raw string) string {
-	if u, err := url.Parse(raw); err == nil {
-		u.RawQuery = ""
-		u.Fragment = ""
-		return u.String()
-	}
-	return raw
 }
 
 // urlExt returns the file extension a URL names. Reddit's format parameter

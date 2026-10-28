@@ -37,7 +37,7 @@ func TestExtractImages(t *testing.T) {
 			want: []string{"https://external-preview.redd.it/AbCdEfGh.png?auto=webp"},
 		},
 		{
-			name: "prefers an animated gallery variant over the still frame",
+			name: "prefers the mp4 over the still and the original gif",
 			post: redditPost{
 				IsGallery: true,
 				GalleryData: &galleryData{Items: []galleryItem{
@@ -48,10 +48,10 @@ func TestExtractImages(t *testing.T) {
 					"b": {S: mediaSource{U: "https://i.redd.it/b.jpg"}},
 				},
 			},
-			want: []string{"https://i.redd.it/a.gif", "https://i.redd.it/b.jpg"},
+			want: []string{"https://i.redd.it/a.mp4", "https://i.redd.it/b.jpg"},
 		},
 		{
-			name: "an animated gallery gif wins over the mp4",
+			name: "an animated gallery gif downloads as the smaller mp4",
 			post: redditPost{
 				IsGallery:   true,
 				GalleryData: &galleryData{Items: []galleryItem{{MediaID: "a"}}},
@@ -63,7 +63,7 @@ func TestExtractImages(t *testing.T) {
 					}},
 				},
 			},
-			want: []string{"https://preview.redd.it/a.gif?s=abc"},
+			want: []string{"https://preview.redd.it/a.mp4?s=abc"},
 		},
 		{
 			name: "a still framed as a gif loses to the mp4 animation",
@@ -82,7 +82,7 @@ func TestExtractImages(t *testing.T) {
 			want: []string{"https://preview.redd.it/a.gif?format=mp4&s=abc"},
 		},
 		{
-			name: "a gif whose url is not animated-shaped has no mp4 to lose to",
+			name: "keeps the gif when there is no mp4 to prefer",
 			post: redditPost{
 				IsGallery:   true,
 				GalleryData: &galleryData{Items: []galleryItem{{MediaID: "a"}}},
@@ -117,12 +117,42 @@ func TestExtractImages(t *testing.T) {
 			want: []string{"https://i.redd.it/3.jpg", "https://i.redd.it/1.jpg", "https://i.redd.it/2.jpg"},
 		},
 		{
-			name: "video fallback url, query stripped",
+			name: "video fallback url keeps its query",
 			post: redditPost{
 				IsVideo: true,
 				Media:   &redditMedia{RedditVideo: &redditVideo{FallbackURL: "https://v.redd.it/abc/DASH_720.mp4?source=fallback"}},
 			},
-			want: []string{"https://v.redd.it/abc/DASH_720.mp4"},
+			want: []string{"https://v.redd.it/abc/DASH_720.mp4?source=fallback"},
+		},
+		{
+			name: "gif post served as reddit_video keeps its signed mp4 url",
+			post: redditPost{
+				IsVideo: true,
+				URL:     "https://i.redd.it/wut8n9cqe2yh1.gif",
+				Media:   &redditMedia{RedditVideo: &redditVideo{FallbackURL: "https://preview.redd.it/wut8n9cqe2yh1.gif?width=1080&format=mp4&s=abc"}},
+			},
+			want: []string{"https://preview.redd.it/wut8n9cqe2yh1.gif?width=1080&format=mp4&s=abc"},
+		},
+		{
+			name: "direct gif defers to the preview mp4",
+			post: redditPost{
+				URL: "https://i.redd.it/0n5exiers7yh1.gif",
+				Preview: &redditPreview{Images: []previewImage{{
+					Source:   previewSource{URL: "https://preview.redd.it/0n5exiers7yh1.gif?s=gif"},
+					Variants: previewVariants{MP4: &previewVariant{Source: previewSource{URL: "https://preview.redd.it/0n5exiers7yh1.gif?format=mp4&s=mp4"}}},
+				}}},
+			},
+			want: []string{"https://preview.redd.it/0n5exiers7yh1.gif?format=mp4&s=mp4"},
+		},
+		{
+			name: "direct gif stays a gif when no mp4 exists",
+			post: redditPost{
+				URL: "https://i.redd.it/0n5exiers7yh1.gif",
+				Preview: &redditPreview{Images: []previewImage{{
+					Source: previewSource{URL: "https://preview.redd.it/0n5exiers7yh1.gif?s=gif"},
+				}}},
+			},
+			want: []string{"https://i.redd.it/0n5exiers7yh1.gif"},
 		},
 		{
 			name: "video beats preview",
@@ -138,23 +168,23 @@ func TestExtractImages(t *testing.T) {
 			post: redditPost{
 				Preview: &redditPreview{Images: []previewImage{{
 					Source:   previewSource{URL: "https://preview.redd.it/still.jpg"},
-					Variants: previewVariants{MP4: &previewVariant{Source: previewSource{URL: "https://preview.redd.it/anim.mp4?s=abc"}}},
+					Variants: previewVariants{MP4: &previewVariant{Source: previewSource{URL: "https://preview.redd.it/0n5exiers7yh1.mp4?s=abc"}}},
 				}}},
 			},
-			want: []string{"https://preview.redd.it/anim.mp4?s=abc"},
+			want: []string{"https://preview.redd.it/0n5exiers7yh1.mp4?s=abc"},
 		},
 		{
-			name: "preview prefers an animated gif variant",
+			name: "preview prefers the mp4 variant over the gif",
 			post: redditPost{
 				Preview: &redditPreview{Images: []previewImage{{
 					Source: previewSource{URL: "https://preview.redd.it/still.jpg"},
 					Variants: previewVariants{
-						GIF: &previewVariant{Source: previewSource{URL: "https://preview.redd.it/anim.gif?s=abc"}},
-						MP4: &previewVariant{Source: previewSource{URL: "https://preview.redd.it/anim.mp4?s=abc"}},
+						GIF: &previewVariant{Source: previewSource{URL: "https://preview.redd.it/0n5exiers7yh1.gif?s=abc"}},
+						MP4: &previewVariant{Source: previewSource{URL: "https://preview.redd.it/0n5exiers7yh1.mp4?s=abc"}},
 					},
 				}}},
 			},
-			want: []string{"https://preview.redd.it/anim.gif?s=abc"},
+			want: []string{"https://preview.redd.it/0n5exiers7yh1.mp4?s=abc"},
 		},
 		{
 			name: "gallery flag without gallery data falls through",
@@ -203,6 +233,10 @@ func TestOriginalURL(t *testing.T) {
 		// i.redd.it 404s, so the resized still is kept instead.
 		{"https://preview.redd.it/x-v0-abc123.gif?format=png8&s=zz", "https://preview.redd.it/x-v0-abc123.gif?format=png8&s=zz"},
 		{"https://preview.redd.it/x-v0-abc123.png?format=png8&s=zz", "https://preview.redd.it/x-v0-abc123.png?format=png8&s=zz"},
+		// mp4/webm renditions are served only by preview.redd.it, and their
+		// signature must survive; rewriting them to i.redd.it 404s.
+		{"https://preview.redd.it/0n5exiers7yh1.mp4?format=mp4&s=zz", "https://preview.redd.it/0n5exiers7yh1.mp4?format=mp4&s=zz"},
+		{"https://preview.redd.it/0n5exiers7yh1.gif?format=mp4&s=zz", "https://preview.redd.it/0n5exiers7yh1.gif?format=mp4&s=zz"},
 		// No usable media ID: left alone rather than mangled.
 		{"https://preview.redd.it/noextension", "https://preview.redd.it/noextension"},
 		{"https://preview.redd.it/short.zzz", "https://preview.redd.it/short.zzz"},

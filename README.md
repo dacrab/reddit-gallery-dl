@@ -7,6 +7,8 @@ A web tool for browsing and downloading Reddit posts — images, GIFs, and video
 
 - No Reddit account or API keys needed
 - Multi-image galleries, GIFs, and Reddit-hosted videos
+- Animated posts download as MP4 when Reddit provides one; GIF is kept only
+  when there is no MP4 rendition
 - Download everything as one ZIP, or pick only what you want
 - Keeps working when Reddit blocks a lookup source
 - No external dependencies — pure Go standard library
