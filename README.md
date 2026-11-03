@@ -1,54 +1,40 @@
 # Reddit Gallery DL
 
-A web tool for browsing and downloading Reddit posts — images, GIFs, and videos
-— as a ZIP file or one at a time.
+Paste a Reddit link, get the post's photos and videos — one at a time or all in a ZIP.
 
-## Features
+**Live demo:** https://reddit-gallery-dl.onrender.com
 
-- No Reddit account or API keys needed
-- Multi-image galleries, GIFs, and Reddit-hosted videos
-- Animated posts download as MP4 when Reddit provides one; GIF is kept only
-  when there is no MP4 rendition
-- Download everything as one ZIP, or pick only what you want
-- Keeps working when Reddit blocks a lookup source
-- No external dependencies — pure Go standard library
-- Dark/light theme and a mobile-friendly page
+It works with multi-image galleries, GIFs, and Reddit-hosted video, and needs no Reddit login or API key. If one way of looking up a post is blocked, it quietly tries another.
 
-## Quick Start
+## It handles
+
+- Galleries with several images, plus GIFs and hosted video
+- Individual downloads or a single ZIP for the whole post
+- MP4 versions of animated posts when Reddit has one
+- Lookup fallbacks when Reddit rate-limits a source
+- Light and dark themes, and a layout that fits a phone
+
+## Run it
+
+With Go 1.27 or newer:
 
 ```bash
 go run .
-# visit http://localhost:5000
 ```
 
-Or with Docker:
+Open <http://localhost:5000>. Or use Docker:
 
 ```bash
 docker build -t reddit-gallery-dl .
 docker run -p 5000:5000 reddit-gallery-dl
 ```
 
-## Deployment
+Set `PORT` if 5000 is taken.
 
-Deployed on [Render](https://render.com) from the `Dockerfile`. The server
-listens on the `PORT` environment variable and defaults to 5000.
+## Details
 
-Note: on Render's free plan the service sleeps while idle, so the first visit
-after a quiet period takes a moment to wake it up.
+- Media streams from Reddit's CDN; the server stores nothing.
+- Media is only ever fetched from Reddit's own hosts.
+- The free Render demo naps when idle, so a first visit may take a few seconds.
 
-## How it works
-
-Paste a Reddit post link and the server looks the post up and lists its media.
-If one lookup source is blocked, it tries another. ZIP downloads stream the
-files straight from Reddit's CDN — nothing is re-hosted, and only Reddit's own
-media hosts are ever fetched.
-
-## Development
-
-```bash
-go test ./...
-```
-
-## License
-
-MIT
+MIT licensed — see [LICENSE](LICENSE).
