@@ -1,47 +1,40 @@
 # Reddit Gallery DL
 
-Browse and download the images, GIFs, and videos from any Reddit post.
+Paste a Reddit link, get the post's photos and videos — one at a time or all in a ZIP.
 
 **Live demo:** https://reddit-gallery-dl.onrender.com
 
-Paste a Reddit link and the page lists every photo and video in the post. Download them one by one, or grab the whole set as a ZIP. No Reddit account or API key needed.
+It works with multi-image galleries, GIFs, and Reddit-hosted video, and needs no Reddit login or API key. If one way of looking up a post is blocked, it quietly tries another.
 
-## Features
+## It handles
 
-- Multi-image galleries, GIFs, and Reddit-hosted videos
-- Download a single file or the whole post as one ZIP
-- Animated posts come as MP4 when Reddit offers one
-- Keeps trying other lookup sources when one is blocked
-- Dark and light themes with a mobile-friendly layout
-- Runs as a single small Go binary with no dependencies
+- Galleries with several images, plus GIFs and hosted video
+- Individual downloads or a single ZIP for the whole post
+- MP4 versions of animated posts when Reddit has one
+- Lookup fallbacks when Reddit rate-limits a source
+- Light and dark themes, and a layout that fits a phone
 
-## Usage
+## Run it
 
-You'll need [Go](https://go.dev) 1.27 or newer.
+With Go 1.27 or newer:
 
 ```bash
 go run .
 ```
 
-Open <http://localhost:5000> and paste a Reddit post link.
-
-With Docker:
+Open <http://localhost:5000>. Or use Docker:
 
 ```bash
 docker build -t reddit-gallery-dl .
 docker run -p 5000:5000 reddit-gallery-dl
 ```
 
-## Good to know
+Set `PORT` if 5000 is taken.
 
-- Files stream straight from Reddit's CDN — nothing is stored on the server.
-- Only Reddit's own media hosts are fetched.
-- The free demo sleeps when idle, so the first visit can take a moment.
+## Details
 
-## Built with
+- Media streams from Reddit's CDN; the server stores nothing.
+- Media is only ever fetched from Reddit's own hosts.
+- The free Render demo naps when idle, so a first visit may take a few seconds.
 
-Go's standard library and a small HTML/CSS front end, packaged in one Docker image.
-
-## License
-
-MIT
+MIT licensed — see [LICENSE](LICENSE).
